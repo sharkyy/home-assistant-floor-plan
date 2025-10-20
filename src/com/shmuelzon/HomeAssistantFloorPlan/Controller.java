@@ -434,7 +434,7 @@ public class Controller {
 
                     Entity firstLight = onLights.get(0);
                     if (firstLight.getIsRgb()) {
-                        generateRedTintedImage(lightImage, imageName);
+                        generateRedTintedImage(lightImage, imageName, stencilMask);
                         Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
                         yaml += generateRgbLightYaml(nightScene, firstLight, imageName);
                     } else {
@@ -760,7 +760,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         ImageIO.write(image, "png", imageFile);
     }
 
-    private BufferedImage processAndSaveFinalImage(BufferedImage image, BufferedImage stencilMask, String imageName) throws IOException {
+    private BufferedImage postProcessImage(BufferedImage image, BufferedImage stencilMask) {
         BufferedImage processedImage = image;
 
         if (enableFloorPlanPostProcessing) {
@@ -778,6 +778,12 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             processedImage = removeGreenBackground(processedImage);
         }
         
+        return processedImage;
+    }
+
+    private BufferedImage processAndSaveFinalImage(BufferedImage image, BufferedImage stencilMask, String imageName) throws IOException {
+        BufferedImage processedImage = postProcessImage(image, stencilMask);
+
         saveFloorPlanImage(processedImage, imageName, "png");
         propertyChangeSupport.firePropertyChange(Property.PREVIEW_UPDATE.name(), null, processedImage);
         return processedImage;
@@ -851,11 +857,6 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         ImageIO.write(image, "png", imageFile);
     }
 
-    private void prepareScene(List<Entity> onLights) {
-        for (Entity light : lightEntities)
-            light.setLightPower(onLights.contains(light) || light.getAlwaysOn());
-    }
-
     private BufferedImage renderScene() throws IOException, InterruptedException {
         Map<Renderer, String> rendererToClassName = new HashMap<Renderer, String>() {{
             put(Renderer.SUNFLOW, "com.eteks.sweethome3d.j3d.PhotoRenderer");
@@ -900,8 +901,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         ImageIO.write(image, extension, floorPlanFile);
     }
 
-    private BufferedImage generateRedTintedImage(BufferedImage image, String imageName) throws IOException {
-        File redTintedFile = new File(outputFloorplanDirectoryName + File.separator + imageName + ".red.png");
+    private BufferedImage generateRedTintedImage(BufferedImage image, String imageName, BufferedImage stencilMask) throws IOException {
         BufferedImage tintedImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
 
         for(int x = 0; x < image.getWidth(); x++) {
@@ -916,8 +916,9 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             }
         }
 
-        ImageIO.write(tintedImage, "png", redTintedFile);
-        return tintedImage;
+        BufferedImage processedTintedImage = postProcessImage(tintedImage, stencilMask);
+        saveFloorPlanImage(processedTintedImage, imageName + ".red", "png");
+        return processedTintedImage;
     }
 
     private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
@@ -1224,8 +1225,48 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         if (onLights == null) { // Special case for base_night
              rawImage = generateNightBaseImage();
         } else {
-            prepareScene(onLights);
-            rawImage = renderScene();
+            Map<HomeLight, Float> originalPowers = new HashMap<>();
+            try {
+                // Determine which lights should be on for this render pass
+                Set<Entity> lightsToTurnOn = new HashSet<>(onLights);
+                lightEntities.stream()
+                    .filter(Entity::getAlwaysOn)
+                    .forEach(lightsToTurnOn::add);
+
+                for (Entity light : lightEntities) {
+                    boolean isLightOn = lightsToTurnOn.contains(light);
+
+                    // Save original power for all underlying HomeLight objects
+                    for (HomePieceOfFurniture piece : light.getPiecesOfFurniture()) {
+                        if (piece instanceof HomeLight) {
+                            originalPowers.put((HomeLight)piece, ((HomeLight)piece).getPower());
+                        }
+                    }
+
+                    // Set the entity state. This likely also sets the HomeLight power to 0.0 or 1.0
+                    light.setLightPower(isLightOn);
+
+                    // If the light is on, override the power with the desired intensity
+                    if (isLightOn) {
+                        float intensity = light.getName().toLowerCase().contains("deckenlampe")
+                            ? renderCeilingLightsIntensity
+                            : renderOtherLightsIntensity;
+                        for (HomePieceOfFurniture piece : light.getPiecesOfFurniture()) {
+                            if (piece instanceof HomeLight) {
+                                ((HomeLight)piece).setPower(intensity / 100.0f);
+                            }
+                        }
+                    }
+                }
+
+                rawImage = renderScene();
+
+            } finally {
+                // Restore all original power values after rendering
+                for (Map.Entry<HomeLight, Float> entry : originalPowers.entrySet()) {
+                    entry.getKey().setPower(entry.getValue());
+                }
+            }
         }
 
         saveRawRender(rawImage, imageName);
