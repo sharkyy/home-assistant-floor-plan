@@ -801,6 +801,23 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         return processedImage;
     }
 
+    private BufferedImage postProcessOverlayImage(BufferedImage image, BufferedImage stencilMask) {
+        BufferedImage processedImage = image;
+
+        if (enableFloorPlanPostProcessing) {
+            if (cropArea != null) {
+                AutoCrop cropper = new AutoCrop();
+                processedImage = cropper.crop(image, cropArea, maintainAspectRatio, renderWidth, renderHeight);
+            }
+
+            if (cropArea != null && stencilMask != null) {
+                processedImage = applyFloorplanStamp(processedImage, stencilMask);
+            }
+        }
+
+        return processedImage;
+    }
+
     private BufferedImage processAndSaveFinalImage(BufferedImage image, BufferedImage stencilMask, String imageName) throws IOException {
         BufferedImage processedImage = postProcessImage(image, stencilMask);
 
@@ -1372,7 +1389,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             g2d.drawPolygon(polygon);
             g2d.dispose();
 
-            BufferedImage processedImage = postProcessImage(roomImage, stencilMask);
+            BufferedImage processedImage = postProcessOverlayImage(roomImage, stencilMask);
 
             String roomName = room.getName() != null ? room.getName() : room.getId();
             File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
