@@ -475,7 +475,7 @@ public class Controller {
             }
 
             if (createRoomSelectors) {
-                generateRoomSelectorImages();
+                generateRoomSelectorImages(stencilMask);
             }
         } catch (InterruptedIOException | ClosedByInterruptException e) {
             throw new InterruptedException();
@@ -1345,7 +1345,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         return new Point2d((objectPosition.x * 0.5 + 0.5) * renderWidth, (objectPosition.y * 0.5 + 0.5) * renderHeight);
     }
 
-    private void generateRoomSelectorImages() throws IOException {
+    private void generateRoomSelectorImages(BufferedImage stencilMask) throws IOException {
         String outputSelectedDirectoryName = outputDirectoryName + File.separator + "floorplan_selected";
         Files.createDirectories(Paths.get(outputSelectedDirectoryName));
 
@@ -1372,7 +1372,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             g2d.drawPolygon(polygon);
             g2d.dispose();
 
-            BufferedImage processedImage = postProcessImage(roomImage, null);
+            BufferedImage processedImage = postProcessImage(roomImage, stencilMask);
 
             String roomName = room.getName() != null ? room.getName() : room.getId();
             File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
