@@ -809,6 +809,36 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         return processedImage;
     }
 
+    private BufferedImage postProcessRoomSelectorImage(BufferedImage image, BufferedImage stencilMask) {
+        BufferedImage processedImage = image;
+
+        if (enableFloorPlanPostProcessing) {
+            // Step 1: Apply stencil mask
+            if (cropArea != null && stencilMask != null) {
+                processedImage = applyFloorplanStamp(processedImage, stencilMask);
+            }
+
+            // Step 2: Crop to the outer bounds of the stamp
+            if (cropArea != null) {
+                AutoCrop cropper = new AutoCrop();
+                // Perform the crop, but don't scale it back up yet.
+                processedImage = cropper.crop(processedImage, cropArea, false, cropArea.width, cropArea.height);
+            }
+
+            // Step 3: Scale the cropped image back to the original target resolution
+            if (processedImage.getWidth() != renderWidth || processedImage.getHeight() != renderHeight) {
+                BufferedImage finalImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = finalImage.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.drawImage(processedImage, 0, 0, renderWidth, renderHeight, null);
+                g.dispose();
+                processedImage = finalImage;
+            }
+        }
+
+        return processedImage;
+    }
+
     private BufferedImage removeGreenBackground(BufferedImage image) {
         BufferedImage transparentImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
         
@@ -1355,11 +1385,8 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
                 continue;
 
-            BufferedImage roomImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
+            BufferedImage roomImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g2d = roomImage.createGraphics();
-
-            g2d.setColor(AutoCrop.CROP_COLOR);
-            g2d.fillRect(0, 0, renderWidth, renderHeight);
 
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2d.setColor(Color.WHITE);
@@ -1375,7 +1402,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             g2d.drawPolygon(polygon);
             g2d.dispose();
 
-            BufferedImage processedImage = postProcessImage(roomImage, stencilMask);
+            BufferedImage processedImage = postProcessRoomSelectorImage(roomImage, stencilMask);
 
             String roomName = room.getName() != null ? room.getName() : room.getId();
             File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
