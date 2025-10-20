@@ -801,23 +801,6 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         return processedImage;
     }
 
-    private BufferedImage postProcessOverlayImage(BufferedImage image, BufferedImage stencilMask) {
-        BufferedImage processedImage = image;
-
-        if (enableFloorPlanPostProcessing) {
-            if (cropArea != null) {
-                AutoCrop cropper = new AutoCrop();
-                processedImage = cropper.crop(image, cropArea, maintainAspectRatio, renderWidth, renderHeight);
-            }
-
-            if (cropArea != null && stencilMask != null) {
-                processedImage = applyFloorplanStamp(processedImage, stencilMask);
-            }
-        }
-
-        return processedImage;
-    }
-
     private BufferedImage processAndSaveFinalImage(BufferedImage image, BufferedImage stencilMask, String imageName) throws IOException {
         BufferedImage processedImage = postProcessImage(image, stencilMask);
 
@@ -1372,8 +1355,11 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
                 continue;
 
-            BufferedImage roomImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
+            BufferedImage roomImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_RGB);
             Graphics2D g2d = roomImage.createGraphics();
+
+            g2d.setColor(AutoCrop.CROP_COLOR);
+            g2d.fillRect(0, 0, renderWidth, renderHeight);
 
             g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2d.setColor(Color.WHITE);
@@ -1389,7 +1375,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             g2d.drawPolygon(polygon);
             g2d.dispose();
 
-            BufferedImage processedImage = postProcessOverlayImage(roomImage, stencilMask);
+            BufferedImage processedImage = postProcessImage(roomImage, stencilMask);
 
             String roomName = room.getName() != null ? room.getName() : room.getId();
             File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
