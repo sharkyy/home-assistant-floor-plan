@@ -1,6 +1,10 @@
 package com.shmuelzon.HomeAssistantFloorPlan;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.Polygon;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
@@ -90,6 +94,7 @@ public class Controller {
     private static final String CONTROLLER_OTHER_LIGHTS_INTENSITY = "otherLightsIntensity";
     private static final String CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY = "renderCeilingLightsIntensity";
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
+    private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
 
     private Home home;
     private Settings settings;
@@ -121,6 +126,7 @@ public class Controller {
     private int otherLightsIntensity;
     private int renderCeilingLightsIntensity;
     private int renderOtherLightsIntensity;
+    private boolean createRoomSelectors;
     private Rectangle cropArea = null;
     private Scenes scenes;
 
@@ -156,6 +162,7 @@ public class Controller {
         otherLightsIntensity = settings.getInteger(CONTROLLER_OTHER_LIGHTS_INTENSITY, 3);
         renderCeilingLightsIntensity = settings.getInteger(CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY, 20);
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
+        createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
     }
 
     public void addPropertyChangeListener(Property property, PropertyChangeListener listener) {
@@ -366,6 +373,15 @@ public class Controller {
         settings.setInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, renderOtherLightsIntensity);
     }
 
+    public boolean getCreateRoomSelectors() {
+        return createRoomSelectors;
+    }
+
+    public void setCreateRoomSelectors(boolean createRoomSelectors) {
+        this.createRoomSelectors = createRoomSelectors;
+        settings.setBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, createRoomSelectors);
+    }
+
     public void stop() {
         if (photoRenderer != null) {
             photoRenderer.stop();
@@ -456,6 +472,10 @@ public class Controller {
                 propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Generating floorplan.yaml..."));
                 yaml += generateEntitiesYaml();
                 Files.write(Paths.get(outputDirectoryName + File.separator + "floorplan.yaml"), yaml.getBytes());
+            }
+
+            if (createRoomSelectors) {
+                generateRoomSelectorImages(stencilMask);
             }
         } catch (InterruptedIOException | ClosedByInterruptException e) {
             throw new InterruptedException();
@@ -786,6 +806,36 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
 
         saveFloorPlanImage(processedImage, imageName, "png");
         propertyChangeSupport.firePropertyChange(Property.PREVIEW_UPDATE.name(), null, processedImage);
+        return processedImage;
+    }
+
+    private BufferedImage postProcessRoomSelectorImage(BufferedImage image, BufferedImage stencilMask) {
+        BufferedImage processedImage = image;
+
+        if (enableFloorPlanPostProcessing) {
+            // Step 1: Apply stencil mask
+            if (cropArea != null && stencilMask != null) {
+                processedImage = applyFloorplanStamp(processedImage, stencilMask);
+            }
+
+            // Step 2: Crop to the outer bounds of the stamp
+            if (cropArea != null) {
+                AutoCrop cropper = new AutoCrop();
+                // Perform the crop, but don't scale it back up yet.
+                processedImage = cropper.crop(processedImage, cropArea, false, cropArea.width, cropArea.height);
+            }
+
+            // Step 3: Scale the cropped image back to the original target resolution
+            if (processedImage.getWidth() != renderWidth || processedImage.getHeight() != renderHeight) {
+                BufferedImage finalImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
+                Graphics2D g = finalImage.createGraphics();
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.drawImage(processedImage, 0, 0, renderWidth, renderHeight, null);
+                g.dispose();
+                processedImage = finalImage;
+            }
+        }
+
         return processedImage;
     }
 
@@ -1313,5 +1363,52 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
                 entry.getKey().setPower(entry.getValue());
             }
         }
+    }
+
+    private Point2d getRoom2dLocation(float x, float y, float elevation) {
+        Vector4d objectPosition = new Vector4d(x, elevation, y, 0);
+
+        objectPosition.sub(cameraPosition);
+        perspectiveTransform.transform(objectPosition);
+        objectPosition.scale(1 / objectPosition.w);
+
+        return new Point2d((objectPosition.x * 0.5 + 0.5) * renderWidth, (objectPosition.y * 0.5 + 0.5) * renderHeight);
+    }
+
+    private void generateRoomSelectorImages(BufferedImage stencilMask) throws IOException {
+        String outputSelectedDirectoryName = outputDirectoryName + File.separator + "floorplan_selected";
+        Files.createDirectories(Paths.get(outputSelectedDirectoryName));
+
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Generating room selectors..."));
+
+        for (Room room : home.getRooms()) {
+            if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
+                continue;
+
+            BufferedImage roomImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g2d = roomImage.createGraphics();
+
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2d.setColor(Color.WHITE);
+            g2d.setStroke(new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0, new float[]{9}, 0));
+
+            Polygon polygon = new Polygon();
+            float elevation = room.getLevel() != null ? room.getLevel().getElevation() : 0;
+            for (float[] point : room.getPoints()) {
+                Point2d p = getRoom2dLocation(point[0], point[1], elevation);
+                polygon.addPoint((int) p.x, (int) p.y);
+            }
+
+            g2d.drawPolygon(polygon);
+            g2d.dispose();
+
+            BufferedImage processedImage = postProcessRoomSelectorImage(roomImage, stencilMask);
+
+            String roomName = room.getName() != null ? room.getName() : room.getId();
+            File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
+            ImageIO.write(processedImage, "png", roomFile);
+        }
+
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selectors."));
     }
 };
