@@ -1434,11 +1434,17 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Generating room selector SVG..."));
 
         StringBuilder svgContent = new StringBuilder();
-        String viewBoxAttribute = "";
+        svgContent.append(String.format("<svg width=\"%d\" height=\"%d\" xmlns=\"http://www.w3.org/2000/svg\">\n", renderWidth, renderHeight));
+
+        String transformAttribute = "";
         if (cropArea != null) {
-            viewBoxAttribute = String.format(" viewBox=\"%d %d %d %d\"", cropArea.x, cropArea.y, cropArea.width, cropArea.height);
+            double scaleX = (double)renderWidth / cropArea.width;
+            double scaleY = (double)renderHeight / cropArea.height;
+            double translateX = -cropArea.x * scaleX;
+            double translateY = -cropArea.y * scaleY;
+            transformAttribute = String.format(Locale.US, " transform=\"translate(%.2f, %.2f) scale(%.2f, %.2f)\"", translateX, translateY, scaleX, scaleY);
         }
-        svgContent.append(String.format("<svg width=\"%d\" height=\"%d\"%s xmlns=\"http://www.w3.org/2000/svg\">\n", renderWidth, renderHeight, viewBoxAttribute));
+        svgContent.append(String.format("<g%s>\n", transformAttribute));
 
         for (Room room : home.getRooms()) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
@@ -1464,9 +1470,12 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             svgContent.append("  </path>\n");
         }
 
+        svgContent.append("</g>\n");
         svgContent.append("</svg>\n");
 
-        String filePath = outputFloorplanDirectoryName + File.separator + "floorplan_rooms.svg";
+        String outputSelectedDirectoryName = outputDirectoryName + File.separator + "floorplan_selected";
+        Files.createDirectories(Paths.get(outputSelectedDirectoryName));
+        String filePath = outputSelectedDirectoryName + File.separator + "floorplan_rooms.svg";
         Files.write(Paths.get(filePath), svgContent.toString().getBytes());
 
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selector SVG."));
