@@ -74,7 +74,7 @@ public class Controller {
     public enum Property {PROGRESS_UPDATE, NUMBER_OF_RENDERS, PREVIEW_UPDATE}
     public enum Renderer {YAFARAY, SUNFLOW}
     public enum Quality {HIGH, LOW}
-    public enum ImageFormat {PNG, JPEG}
+    public enum ImageFormat {PNG, JPEG, SVG}
 
     private static final String TRANSPARENT_IMAGE_NAME = "transparent";
 
@@ -95,6 +95,7 @@ public class Controller {
     private static final String CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY = "renderCeilingLightsIntensity";
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
     private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
+    private static final String CONTROLLER_ROOM_SELECTORS_IMAGE_FORMAT = "roomSelectorsImageFormat";
 
     private Home home;
     private Settings settings;
@@ -127,6 +128,7 @@ public class Controller {
     private int renderCeilingLightsIntensity;
     private int renderOtherLightsIntensity;
     private boolean createRoomSelectors;
+    private ImageFormat roomSelectorsImageFormat;
     private Rectangle cropArea = null;
     private Scenes scenes;
 
@@ -163,6 +165,7 @@ public class Controller {
         renderCeilingLightsIntensity = settings.getInteger(CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY, 20);
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
         createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
+        roomSelectorsImageFormat = ImageFormat.valueOf(settings.get(CONTROLLER_ROOM_SELECTORS_IMAGE_FORMAT, ImageFormat.PNG.name()));
     }
 
     public void addPropertyChangeListener(Property property, PropertyChangeListener listener) {
@@ -380,6 +383,15 @@ public class Controller {
     public void setCreateRoomSelectors(boolean createRoomSelectors) {
         this.createRoomSelectors = createRoomSelectors;
         settings.setBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, createRoomSelectors);
+    }
+
+    public ImageFormat getRoomSelectorsImageFormat() {
+        return roomSelectorsImageFormat;
+    }
+
+    public void setRoomSelectorsImageFormat(ImageFormat roomSelectorsImageFormat) {
+        this.roomSelectorsImageFormat = roomSelectorsImageFormat;
+        settings.set(CONTROLLER_ROOM_SELECTORS_IMAGE_FORMAT, roomSelectorsImageFormat.name());
     }
 
     public void stop() {
@@ -1376,6 +1388,11 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
     }
 
     private void generateRoomSelectorImages(BufferedImage stencilMask) throws IOException {
+        if (roomSelectorsImageFormat == ImageFormat.SVG) {
+            generateRoomSelectorSvg();
+            return;
+        }
+
         String outputSelectedDirectoryName = outputDirectoryName + File.separator + "floorplan_selected";
         Files.createDirectories(Paths.get(outputSelectedDirectoryName));
 
@@ -1410,5 +1427,47 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         }
 
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selectors."));
+    }
+
+    private void generateRoomSelectorSvg() throws IOException {
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Generating room selector SVG..."));
+
+        StringBuilder svgContent = new StringBuilder();
+        String viewBoxAttribute = "";
+        if (cropArea != null) {
+            viewBoxAttribute = String.format(" viewBox=\"%d %d %d %d\"", cropArea.x, cropArea.y, cropArea.width, cropArea.height);
+        }
+        svgContent.append(String.format("<svg width=\"%d\" height=\"%d\"%s xmlns=\"http://www.w3.org/2000/svg\">\n", renderWidth, renderHeight, viewBoxAttribute));
+
+        for (Room room : home.getRooms()) {
+            if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
+                continue;
+
+            String roomName = room.getName() != null ? room.getName() : room.getId();
+            svgContent.append(String.format("  <path id=\"%s\" d=\"", roomName));
+
+            float elevation = room.getLevel() != null ? room.getLevel().getElevation() : 0;
+            boolean firstPoint = true;
+            for (float[] point : room.getPoints()) {
+                Point2d p = getRoom2dLocation(point[0], point[1], elevation);
+                if (firstPoint) {
+                    svgContent.append(String.format(Locale.US, "M %.2f %.2f", p.x, p.y));
+                    firstPoint = false;
+                } else {
+                    svgContent.append(String.format(Locale.US, " L %.2f %.2f", p.x, p.y));
+                }
+            }
+            svgContent.append(" Z\""); // Z schließt den Pfad
+            svgContent.append(" style=\"fill:none;stroke:white;stroke-width:2;stroke-dasharray:9, 5;\" >\n");
+            svgContent.append(String.format("    <title>%s</title>\n", roomName));
+            svgContent.append("  </path>\n");
+        }
+
+        svgContent.append("</svg>\n");
+
+        String filePath = outputFloorplanDirectoryName + File.separator + "floorplan_rooms.svg";
+        Files.write(Paths.get(filePath), svgContent.toString().getBytes());
+
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selector SVG."));
     }
 };

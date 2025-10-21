@@ -113,6 +113,8 @@ public class Panel extends JPanel implements DialogView {
 
     private JLabel imageFormatLabel;
     private JComboBox<Controller.ImageFormat> imageFormatComboBox;
+    private JLabel roomSelectorsImageFormatLabel;
+    private JComboBox<Controller.ImageFormat> roomSelectorsImageFormatComboBox;
     private JButton outputDirectoryBrowseButton;
     private FileContentManager outputDirectoryChooser;
     private JCheckBox useExistingRendersCheckbox;
@@ -555,6 +557,24 @@ public class Panel extends JPanel implements DialogView {
         createRoomSelectorsCheckbox.addItemListener(new ItemListener() {
             public void itemStateChanged(ItemEvent ev) {
                 controller.setCreateRoomSelectors(createRoomSelectorsCheckbox.isSelected());
+                updatePanelVisibility();
+            }
+        });
+
+        roomSelectorsImageFormatLabel = new JLabel();
+        roomSelectorsImageFormatLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.roomSelectorsImageFormatLabel.text"));
+        roomSelectorsImageFormatComboBox = new JComboBox<Controller.ImageFormat>(new Controller.ImageFormat[] { Controller.ImageFormat.PNG, Controller.ImageFormat.SVG });
+        roomSelectorsImageFormatComboBox.setSelectedItem(controller.getRoomSelectorsImageFormat());
+        roomSelectorsImageFormatComboBox.setRenderer(new DefaultListCellRenderer() {
+            public Component getListCellRendererComponent(JList<?> jList, Object o, int i, boolean b, boolean b1) {
+                Component rendererComponent = super.getListCellRendererComponent(jList, o, i, b, b1);
+                setText(resource.getString(String.format("HomeAssistantFloorPlan.Panel.imageFormatComboBox.%s.text", ((Controller.ImageFormat)o).name())));
+                return rendererComponent;
+            }
+        });
+        roomSelectorsImageFormatComboBox.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ev) {
+                controller.setRoomSelectorsImageFormat((Controller.ImageFormat)roomSelectorsImageFormatComboBox.getSelectedItem());
             }
         });
 
@@ -658,6 +678,7 @@ public class Panel extends JPanel implements DialogView {
         ceilingLightsIntensitySpinner.setEnabled(enabled);
         otherLightsIntensitySpinner.setEnabled(enabled);
         imageFormatComboBox.setEnabled(enabled);
+        roomSelectorsImageFormatComboBox.setEnabled(enabled);
         outputDirectoryTextField.setEnabled(enabled);
         outputDirectoryBrowseButton.setEnabled(enabled);
         useExistingRendersCheckbox.setEnabled(enabled);
@@ -765,6 +786,12 @@ public class Panel extends JPanel implements DialogView {
         generalSettingsPanel.add(imageFormatComboBox, new GridBagConstraints(
             1, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        generalSettingsPanel.add(roomSelectorsImageFormatLabel, new GridBagConstraints(
+            2, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        generalSettingsPanel.add(roomSelectorsImageFormatComboBox, new GridBagConstraints(
+            3, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
         generalSettingsPanelGridYIndex++;
 
         generalSettingsPanel.add(transparencyThresholdLabel, new GridBagConstraints(
@@ -867,6 +894,10 @@ public class Panel extends JPanel implements DialogView {
         boolean nightRenderEnabled = nightRenderCheckbox.isSelected();
         renderImagesPanel.setVisible(nightRenderEnabled);
         baseImagesPanel.setVisible(nightRenderEnabled);
+
+        boolean roomSelectorsEnabled = createRoomSelectorsCheckbox.isSelected();
+        roomSelectorsImageFormatLabel.setVisible(roomSelectorsEnabled);
+        roomSelectorsImageFormatComboBox.setVisible(roomSelectorsEnabled);
     }
 
     public void displayView(View parentView) {
