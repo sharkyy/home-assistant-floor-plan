@@ -86,6 +86,7 @@ public class Entity implements Comparable<Entity> {
     private Map<HomePieceOfFurniture, Point3f> initialLocation;
     private Map<HomePieceOfFurniture, Point3f> initialSize;
     private Map<HomePieceOfFurniture, Transformation[] > initialTransformations;
+    private Map<HomePieceOfFurniture, Boolean> initialVisibility;
 
     private Settings settings;
     private boolean isUserDefinedPosition;
@@ -99,8 +100,10 @@ public class Entity implements Comparable<Entity> {
         initialLocation = new HashMap<>();
         initialSize = new HashMap<>();
         initialTransformations = new HashMap<>();
+        initialVisibility = new HashMap<>();
 
         loadDefaultAttributes();
+        saveInitialVisibility();
     }
 
     public void move(Vector2d direction) {
@@ -449,7 +452,9 @@ public class Entity implements Comparable<Entity> {
     }
 
     public void restoreConfiguration() {
-        setVisible(true);
+        for (Map.Entry<HomePieceOfFurniture, Boolean> entry : initialVisibility.entrySet()) {
+            entry.getKey().setVisible(entry.getValue());
+        }
 
         if (isLight)
             setLightPower(true);
@@ -459,8 +464,15 @@ public class Entity implements Comparable<Entity> {
     }
 
     public void setVisible(boolean visible) {
-        for (HomePieceOfFurniture piece : piecesOfFurniture)
+        for (HomePieceOfFurniture piece : piecesOfFurniture) {
             piece.setVisible(visible);
+        }
+    }
+
+    private void saveInitialVisibility() {
+        for (HomePieceOfFurniture piece : piecesOfFurniture) {
+            initialVisibility.put(piece, piece.isVisible());
+        }
     }
 
     private String actionYaml(Action action, String value) {

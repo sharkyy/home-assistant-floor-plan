@@ -12,12 +12,13 @@ J3D_VECMATH_JAR=dl/vecmath.jar
 JAVA_DEPENDENCIES=$(SWEET_HOME_JAR) $(J3D_CORE_JAR) $(J3D_VECMATH_JAR)
 PLUGIN=HomeAssistantFloorPlanPlugin-$(VERSION).sh3p
 
+#DOCKER_CMD :=
+#ifeq ($(wildcard /.dockerenv),)
+#ifneq ($(shell which docker),)
+#  DOCKER_CMD := sudo docker run --rm --user $(shell id -u):$(shell id -g) --volume $(shell pwd):$(shell pwd) --workdir $(shell pwd) eclipse-temurin:8-noble
+#endif
+#endif
 DOCKER_CMD :=
-ifeq ($(wildcard /.dockerenv),)
-ifneq ($(shell which docker),)
-  DOCKER_CMD := sudo docker run --rm --user $(shell id -u):$(shell id -g) --volume $(shell pwd):$(shell pwd) --workdir $(shell pwd) eclipse-temurin:8-noble
-endif
-endif
 
 ifneq ($(V),)
   Q :=
@@ -51,7 +52,7 @@ build/%.class: src/%.java $(JAVA_DEPENDENCIES)
 
 build/%.properties: src/%.properties
 	$(Q)mkdir -p $(dir $@)
-	$(call exec,GEN,$@,envsubst < $< > $@)
+	$(call exec,GEN,$@,cp $< $@)
 
 $(PLUGIN): $(OBJS)
 	$(call exec,JAR,$@,$(DOCKER_CMD) jar -cf $@ -C build .)

@@ -95,6 +95,7 @@ public class Controller {
     private static final String CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY = "renderCeilingLightsIntensity";
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
     private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
+    private static final String CONTROLLER_RENDER_CURTAIN_STATES = "renderCurtainStates";
 
     private Home home;
     private Settings settings;
@@ -127,6 +128,7 @@ public class Controller {
     private int renderCeilingLightsIntensity;
     private int renderOtherLightsIntensity;
     private boolean createRoomSelectors;
+    private boolean renderCurtainStates;
     private Rectangle cropArea = null;
     private Scenes scenes;
 
@@ -163,6 +165,7 @@ public class Controller {
         renderCeilingLightsIntensity = settings.getInteger(CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY, 20);
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
         createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
+        renderCurtainStates = settings.getBoolean(CONTROLLER_RENDER_CURTAIN_STATES, false);
     }
 
     public void addPropertyChangeListener(Property property, PropertyChangeListener listener) {
@@ -382,6 +385,15 @@ public class Controller {
         settings.setBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, createRoomSelectors);
     }
 
+    public boolean getRenderCurtainStates() {
+        return renderCurtainStates;
+    }
+
+    public void setRenderCurtainStates(boolean renderCurtainStates) {
+        this.renderCurtainStates = renderCurtainStates;
+        settings.setBoolean(CONTROLLER_RENDER_CURTAIN_STATES, renderCurtainStates);
+    }
+
     public void stop() {
         if (photoRenderer != null) {
             photoRenderer.stop();
@@ -391,6 +403,18 @@ public class Controller {
 
     public boolean isProjectEmpty() {
         return home == null || home.getFurniture().isEmpty();
+    }
+
+    private void setCurtainsVisibility(boolean isOpen) {
+        for (Entity entity : otherEntities) {
+            if (entity.getName().toLowerCase().startsWith("curtains.")) {
+                if (entity.getName().toLowerCase().endsWith("_open")) {
+                    entity.setVisible(isOpen);
+                } else if (entity.getName().toLowerCase().endsWith("_closed")) {
+                    entity.setVisible(!isOpen);
+                }
+            }
+        }
     }
 
     public void render() throws IOException, InterruptedException {
@@ -424,59 +448,15 @@ public class Controller {
                 propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Stamp processed."));
             }
 
-            generateTransparentImage(outputFloorplanDirectoryName + File.separator + TRANSPARENT_IMAGE_NAME + ".png");
-            String yaml = String.format(
-                "type: picture-elements\n" +
-                "image: /local/floorplan/%s.png?version=%s\n" +
-                "elements:\n", TRANSPARENT_IMAGE_NAME, renderHash(TRANSPARENT_IMAGE_NAME, true));
-
-            turnOffLightsFromOtherLevels();
-
-            camera.setTime(renderDateTimes.get(0));
-            BufferedImage rawDayBaseImage = processImage("base_day", new ArrayList<>(), null, stencilMask);
-            if (generateFloorplanYaml) {
-                yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(0), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_day", false);
+            if (renderCurtainStates) {
+                setCurtainsVisibility(true);
+                doRender(stencilMask, "_open");
+                setCurtainsVisibility(false);
+                doRender(stencilMask, "_closed");
+            } else {
+                doRender(stencilMask, "");
             }
 
-            for (String group : lightsGroups.keySet()) {
-                List<Entity> groupLights = lightsGroups.get(group);
-                long renderTime = renderDateTimes.get(renderDateTimes.size() - 1);
-                camera.setTime(renderTime);
-
-                List<List<Entity>> lightCombinations = getCombinations(groupLights);
-                for (List<Entity> onLights : lightCombinations) {
-                    String imageName = String.join("_", onLights.stream().map(Entity::getName).collect(Collectors.toList()));
-                    BufferedImage lightImage = processImage(imageName, onLights, rawDayBaseImage, stencilMask);
-
-                    Entity firstLight = onLights.get(0);
-                    if (firstLight.getIsRgb()) {
-                        generateRedTintedImage(lightImage, imageName, stencilMask);
-                        Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
-                        yaml += generateRgbLightYaml(nightScene, firstLight, imageName);
-                    } else {
-                        Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
-                        yaml += generateLightYaml(nightScene, groupLights, onLights, imageName);
-                    }
-                }
-            }
-
-            if (renderDateTimes.size() > 1) {
-                camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
-                processImage("base_night", null, null, stencilMask);
-                if (generateFloorplanYaml) {
-                    yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night", false);
-                }
-            }
-
-            if (generateFloorplanYaml) {
-                propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Generating floorplan.yaml..."));
-                yaml += generateEntitiesYaml();
-                Files.write(Paths.get(outputDirectoryName + File.separator + "floorplan.yaml"), yaml.getBytes());
-            }
-
-            if (createRoomSelectors) {
-                generateRoomSelectorImages(stencilMask);
-            }
         } catch (InterruptedIOException | ClosedByInterruptException e) {
             throw new InterruptedException();
         } catch (IOException e) {
@@ -485,6 +465,62 @@ public class Controller {
             home.getEnvironment().setSkyColor(originalSkyColor);
             home.getEnvironment().setGroundColor(originalGroundColor);
             restoreEntityConfiguration();
+        }
+    }
+
+    private void doRender(BufferedImage stencilMask, String suffix) throws IOException, InterruptedException {
+        generateTransparentImage(outputFloorplanDirectoryName + File.separator + TRANSPARENT_IMAGE_NAME + suffix + ".png");
+        String yaml = String.format(
+            "type: picture-elements\n" +
+            "image: /local/floorplan/%s.png?version=%s\n" +
+            "elements:\n", TRANSPARENT_IMAGE_NAME + suffix, renderHash(TRANSPARENT_IMAGE_NAME + suffix, true));
+
+        turnOffLightsFromOtherLevels();
+
+        camera.setTime(renderDateTimes.get(0));
+        BufferedImage rawDayBaseImage = processImage("base_day" + suffix, new ArrayList<>(), null, stencilMask);
+        if (generateFloorplanYaml) {
+            yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(0), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_day" + suffix, false);
+        }
+
+        for (String group : lightsGroups.keySet()) {
+            List<Entity> groupLights = lightsGroups.get(group);
+            long renderTime = renderDateTimes.get(renderDateTimes.size() - 1);
+            camera.setTime(renderTime);
+
+            List<List<Entity>> lightCombinations = getCombinations(groupLights);
+            for (List<Entity> onLights : lightCombinations) {
+                String imageName = String.join("_", onLights.stream().map(Entity::getName).collect(Collectors.toList())) + suffix;
+                BufferedImage lightImage = processImage(imageName, onLights, rawDayBaseImage, stencilMask);
+
+                Entity firstLight = onLights.get(0);
+                if (firstLight.getIsRgb()) {
+                    generateRedTintedImage(lightImage, imageName, stencilMask);
+                    Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+                    yaml += generateRgbLightYaml(nightScene, firstLight, imageName);
+                } else {
+                    Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+                    yaml += generateLightYaml(nightScene, groupLights, onLights, imageName);
+                }
+            }
+        }
+
+        if (renderDateTimes.size() > 1) {
+            camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
+            processImage("base_night" + suffix, null, null, stencilMask);
+            if (generateFloorplanYaml) {
+                yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night" + suffix, false);
+            }
+        }
+
+        if (generateFloorplanYaml) {
+            propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Generating floorplan.yaml..."));
+            yaml += generateEntitiesYaml();
+            Files.write(Paths.get(outputDirectoryName + File.separator + "floorplan" + suffix + ".yaml"), yaml.getBytes());
+        }
+
+        if (createRoomSelectors) {
+            generateRoomSelectorImages(stencilMask);
         }
     }
 
@@ -751,7 +787,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
         if (name == null)
             return false;
 
-        return sensorPrefixes.stream().anyMatch(name::startsWith);
+        return sensorPrefixes.stream().anyMatch(name::startsWith) || name.toLowerCase().startsWith("curtains.");
     }
 
     private void build3dProjection() {
