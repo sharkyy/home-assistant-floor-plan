@@ -755,7 +755,7 @@ public class Controller {
         for (Room room : home.getRooms()) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
                 continue;
-            String roomName = room.getName() != null ? room.getName() : room.getId();
+            String roomName = room.getName() != null && !room.getName().trim().isEmpty() ? room.getName() : room.getId();
             for (Entity entity : lightEntities) {
                 HomePieceOfFurniture light = entity.getPiecesOfFurniture().get(0);
                 if (room.containsPoint(light.getX(), light.getY(), 0) && room.getLevel() == light.getLevel()) {
@@ -1473,7 +1473,7 @@ public class Controller {
 
             BufferedImage processedImage = postProcessRoomSelectorImage(roomImage, stencilMask);
 
-            String roomName = room.getName() != null ? room.getName() : room.getId();
+            String roomName = room.getName() != null && !room.getName().trim().isEmpty() ? room.getName() : room.getId();
             File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
             ImageIO.write(processedImage, "png", roomFile);
         }
