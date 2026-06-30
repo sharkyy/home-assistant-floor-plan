@@ -743,41 +743,30 @@ public class Controller {
             otherLevelsEntities.add(new Entity(settings, Arrays.asList(piece)));
     }
 
-    private void buildLightsGroupsByRoom() {
-        List<Room> homeRooms = home.getRooms();
+    private void buildLightsGroups() {
+        lightsGroups.clear();
 
-        for (Room room : homeRooms) {
+        // Group every light by the room that contains it. Each room then gets the
+        // full set of on/off combinations of its lights rendered at night.
+        Set<Entity> groupedLights = new HashSet<>();
+        for (Room room : home.getRooms()) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
                 continue;
             String roomName = room.getName() != null ? room.getName() : room.getId();
             for (Entity entity : lightEntities) {
                 HomePieceOfFurniture light = entity.getPiecesOfFurniture().get(0);
                 if (room.containsPoint(light.getX(), light.getY(), 0) && room.getLevel() == light.getLevel()) {
-                    if (!lightsGroups.containsKey(roomName))
-                        lightsGroups.put(roomName, new ArrayList<>());
-                    lightsGroups.get(roomName).add(entity);
+                    lightsGroups.computeIfAbsent(roomName, key -> new ArrayList<>()).add(entity);
+                    groupedLights.add(entity);
                 }
             }
         }
-    }
 
-    private void buildLightsGroupsByLight() {
+        // Lights that aren't inside any room get their own group so they're still rendered.
         for (Entity entity : lightEntities) {
-            lightsGroups.put(entity.getName(), new ArrayList<>());
-            lightsGroups.get(entity.getName()).add(entity);
+            if (!groupedLights.contains(entity))
+                lightsGroups.put(entity.getName(), new ArrayList<>(Arrays.asList(entity)));
         }
-    }
-
-    private void buildLightsGroupsByHome() {
-        lightsGroups.put("Home", new ArrayList<>());
-        for (Entity entity : lightEntities)
-            lightsGroups.get("Home").add(entity);
-    }
-
-    private void buildLightsGroups() {
-        lightsGroups.clear();
-
-        buildLightsGroupsByLight();
     }
 
     private void buildScenes() {
