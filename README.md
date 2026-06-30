@@ -13,10 +13,9 @@ light, sensors and cameras.
 * **3D Rendered Floor Plan** - Integrates with Sweet Home 3D to automatically
   generate images of your floorplan (displays current lighting state, sensors,
   and other entities with interactive icons for toggling lights)
-* **Rendering Modes** - Allow user to select the best rendering option to
-  generate images from his Sweet Home 3D project
-* **Complete Renders Mode** - Renders images for all possible light combinations
-  and rooms
+* **Per-Room Night Rendering** - Generates a daytime base image, a night-time
+  base image and, for each room, the night renders of every on/off combination
+  of that room's lights
 * **YAML Configuration** - Generate a YAML file with the picture-elements
   structure for easy integration with Home Assistant
 * **Configuration Options** -
@@ -31,37 +30,30 @@ light, sensors and cameras.
   * Caches previously rendered images to save time when generating the next
     floorplan
 
-## Rendering Modes
+## How Rendering Works
 
-This plugin supports 3 modes for rendering the different lights
+For each floor plan the plugin renders three kinds of images:
 
-### CSS
+1. **Base day** - A single daytime image of the whole floor with all lights
+   off. It is the background shown while the sun is above the horizon.
+2. **Base night** - A single night-time image of the whole floor, used as the
+   background shown while the sun is below the horizon.
+3. **Per-room night renders** - For every room, all on/off combinations of the
+   lights located in that room are rendered at night. Lights that are not
+   inside any room are rendered individually.
 
-In this (recommended) mode a base image is generated with all the lights turned
-off. Then, for each light source, a new image is rendered with only it turned
-on. The floor plan YAML then instructs the browser how to mix the different
-lights sources from each render when multiple light sources interact with each
-other.
+In Home Assistant the per-room images are overlaid on the night background with
+the `lighten` blend mode, so the rooms whose lights are on light up according
+to the current Home Assistant state.
 
-This method offers good results with a low number of required images to render.
+Because each room renders every combination of its lights, the number of images
+grows quickly with the number of switchable lights per room (`2^n - 1` images
+per room with `n` lights). Keep the number of separately-switchable lights per
+room small to keep the render count manageable.
 
-### Room Overlay
-
-The floor plan is comprised of one base/background image without any of the
-lights turned on. Then, for each light, it generates an overlay image where only
-changed pixels are included and the rest of the image is transparent. This
-allows for overlaying multiple images, with multiple lights turned on together
-without the need for different renders for all possible combinations.
-
-In order to get the best results for lights that do interact with each other,
-i.e., the lights that appear in the same room, will be rendered with all
-possible combinations. This approach significantly reduces the number of
-rendered images, compared to all possible combinations of the entire floor.
-
-### Complete Renders
-
-This mode renders separate images for all possible light combinations on the
-rendered floor. It requires generating many renders but offers the best quality.
+> [!NOTE]
+> The night renders and the night base image use the configured night time, so
+> the **Night-time render** option must be enabled for this scheme to work.
 
 ## How To Use The Plugin
 
@@ -84,13 +76,20 @@ the room they're located in. Please verify the list matches your expectations.
 
 * Width / Height - Configure the required output resolution of the rendered
   images
-* Light mixing mode - See [Rendering Modes](#rendering-modes)
+* Lights are mixed automatically per room, see
+  [How Rendering Works](#how-rendering-works)
 * Render time - The date and time of the rendered image, affects the sun
   position, intensity and color
-* Night-time render - Allows setting an additional render to be used during the
-  night. Enabling this requires the
+* Night-time render - Sets the night render time and enables the night base
+  image and the per-room night renders (see
+  [How Rendering Works](#how-rendering-works)). This requires the
   [Sun](https://www.home-assistant.io/integrations/sun/) integration, which is
   enabled by default
+* Light intensity - Ceiling lights and other lights use separate, configurable
+  intensities, both for the per-room night renders and for the night base image
+* Edge smoothing - Feathers the stamp-based cut-out edge when post-processing is
+  enabled; `0` keeps a hard edge, higher values blend the floor plan outline
+  more smoothly
 * Renderer - Select which rendering engine to use, YafaRay or SunFlow
 * Image format - The image file format of the resulting floor plan (PNG or JPEG)
 * Quality - Choose the rendering quality (low or high)
@@ -216,29 +215,17 @@ When using the "Room overlay" light mixing mode, it's also suggested to:
   one. Start the rendering process and then leave it to complete.
 
 * **What's the difference between `renders` and `floorplan` folders?**
-  The renders directory includes the rendered images as generated by SH3D. The
-  floorplan directory includes the images you need to copy over to Home Assistant.
-  With the CSS option, both directories are pretty much the same, except that the
-  base image (with all the lights turned off) exists only in the floorplan
-  directory. This is because in this mode, we let the browser to the light
-  blending and this plugin doesn't need to do anything special.
-
-  With the room overlay mode, the renders, again, includes all the images
-  generated by SH3D while the floorplan directory will include the processed
-  images with the transparent background.
-
-  The renders directory was created (back when room overlay was the only option)
-  in case one wanted to change any parameters to generate a
-  new floor plan without needing to wait for all the renders from SH3D, which
-  don't change. It's basically a cache of rendered images.
+  The renders directory holds the raw images as generated by SH3D. The floorplan
+  directory holds the post-processed images (cropped, with a transparent
+  background) that you copy over to Home Assistant. The renders directory acts as
+  a cache: when re-generating the floor plan with the same renders you don't have
+  to wait for SH3D to ray-trace them again.
 
 * **What's the use of `Use existing renders` option?**
-  Technically this option can work with any mode. You can start with the CSS
-  mode and generate the least number of needed renders but then decide to switch
-  to room overlay. When doing so, you already have part of the required renders
-  and there's no need to generate them again. If you started with room overlay and
-  switched to CSS, you'll have all of the required images and the whole process
-  will be done in a few seconds
+  When enabled, any image that already exists from a previous run is reused
+  instead of being rendered again. This lets you tweak post-processing or YAML
+  settings and regenerate the floor plan in seconds without re-rendering every
+  image.
 
 ## Possible Future Enhancements
 - [x] Allow selecting renderer (SunFlow/Yafaray)
