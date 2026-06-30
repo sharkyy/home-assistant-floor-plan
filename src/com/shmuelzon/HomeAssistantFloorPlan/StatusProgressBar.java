@@ -2,7 +2,7 @@ package com.shmuelzon.HomeAssistantFloorPlan;
 
 import javax.swing.JProgressBar;
 
-public class StatusProgressBar extends javax.swing.JProgressBar {
+public class StatusProgressBar extends JProgressBar {
     private String statusText = "";
 
     @Override

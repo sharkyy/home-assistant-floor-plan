@@ -43,7 +43,6 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import com.shmuelzon.HomeAssistantFloorPlan.StatusProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
@@ -507,10 +506,10 @@ public class Panel extends JPanel implements DialogView {
         useExistingRendersCheckbox = new JCheckBox();
         useExistingRendersCheckbox.setText(resource.getString("HomeAssistantFloorPlan.Panel.useExistingRenders.text"));
         useExistingRendersCheckbox.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.useExistingRenders.tooltip"));
-        useExistingRendersCheckbox.setSelected(controller.getUserExistingRenders());
+        useExistingRendersCheckbox.setSelected(controller.getUseExistingRenders());
         useExistingRendersCheckbox.addItemListener(new ItemListener() {
             public void itemStateChanged(ItemEvent ev) {
-                controller.setUserExistingRenders(useExistingRendersCheckbox.isSelected());
+                controller.setUseExistingRenders(useExistingRendersCheckbox.isSelected());
             }
         });
 
@@ -914,7 +913,7 @@ public class Panel extends JPanel implements DialogView {
 
         for (String group : new TreeSet<String>(entityGroups.keySet())) {
             DefaultMutableTreeNode groupNode;
-            if (entityGroups.get(group).size() != 1 || entityGroups.get(group).get(0).getName() != group)
+            if (entityGroups.get(group).size() != 1 || !entityGroups.get(group).get(0).getName().equals(group))
             {
                 groupNode = new DefaultMutableTreeNode(group);
                 for (Entity light : new TreeSet<>(entityGroups.get(group)))

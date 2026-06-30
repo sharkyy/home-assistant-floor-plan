@@ -68,8 +68,6 @@ public class EntityOptionsPanel extends JPanel {
     private JTextField backgroundColorTextField;
     private JLabel alwaysOnLabel;
     private JCheckBox alwaysOnCheckbox;
-    private JLabel autoCropLabel;
-    private JCheckBox autoCropCheckbox;
     private JLabel isRgbLabel;
     private JCheckBox isRgbCheckbox;
     private JLabel displayFurnitureConditionLabel;
@@ -323,11 +321,11 @@ public class EntityOptionsPanel extends JPanel {
         backgroundColorLabel = new JLabel();
         backgroundColorLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.backgroundColorLabel.text"));
         backgroundColorTextField = new JTextField(20);
-        backgroundColorTextField.setText(entity.getBackgrounColor());
+        backgroundColorTextField.setText(entity.getBackgroundColor());
         backgroundColorTextField.getDocument().addDocumentListener(new SimpleDocumentListener() {
             @Override
             public void executeUpdate(DocumentEvent e) {
-                entity.setBackgrounColor(backgroundColorTextField.getText());
+                entity.setBackgroundColor(backgroundColorTextField.getText());
                 markModified();
             }
         });

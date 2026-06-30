@@ -373,11 +373,11 @@ public class Entity implements Comparable<Entity> {
         return settings.get(name + "." + SETTING_NAME_OPACITY) != null;
     }
 
-    public String getBackgrounColor() {
+    public String getBackgroundColor() {
         return backgroundColor;
     }
 
-    public void setBackgrounColor(String backgroundColor) {
+    public void setBackgroundColor(String backgroundColor) {
         this.backgroundColor = backgroundColor;
         settings.set(name + "." + SETTING_NAME_BACKGROUND_COLOR, backgroundColor);
     }
@@ -579,7 +579,7 @@ public class Entity implements Comparable<Entity> {
         name = firstPiece.getName();
         position = loadPosition();
         displayType = getSavedEnumValue(DisplayType.class, name + "." + SETTING_NAME_DISPLAY_TYPE, defaultDisplayType());
-        iconOverride = settings.get(name + "." + SETTING_NAME_DISPLAY_TYPE, "");
+        iconOverride = settings.get(name + "." + SETTING_NAME_ICON_OVERRIDE, "");
         displayCondition = getSavedEnumValue(DisplayCondition.class, name + "." + SETTING_NAME_DISPLAY_CONDITION, DisplayCondition.ALWAYS);
         tapAction = getSavedEnumValue(Action.class, name + "." + SETTING_NAME_TAP_ACTION, defaultAction());
         tapActionValue = settings.get(name + "." + SETTING_NAME_TAP_ACTION_VALUE, "");
@@ -626,7 +626,7 @@ public class Entity implements Comparable<Entity> {
             "switch.",
             "vacuum.",
             "valve.",
-            "water_header.",
+            "water_heater.",
         };
 
         for (String prefix : actionableEntityPrefixes ) {

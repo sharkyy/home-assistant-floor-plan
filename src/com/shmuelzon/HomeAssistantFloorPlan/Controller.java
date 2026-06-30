@@ -10,7 +10,6 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.awt.Point;
-import java.awt.Point;
 import java.awt.Rectangle;
 import java.io.File;
 import java.io.IOException;
@@ -77,6 +76,7 @@ public class Controller {
     public enum ImageFormat {PNG, JPEG}
 
     private static final String TRANSPARENT_IMAGE_NAME = "transparent";
+    private static final String CEILING_LIGHT_NAME_KEYWORD = "deckenlampe";
 
     private static final String CONTROLLER_RENDER_WIDTH = "renderWidth";
     private static final String CONTROLLER_RENDER_HEIGHT = "renderHeigh";
@@ -255,11 +255,11 @@ public class Controller {
         settings.set(CONTROLLER_OUTPUT_DIRECTORY_NAME, outputDirectoryName);
     }
 
-    public boolean getUserExistingRenders() {
+    public boolean getUseExistingRenders() {
         return useExistingRenders;
     }
 
-    public void setUserExistingRenders(boolean useExistingRenders) {
+    public void setUseExistingRenders(boolean useExistingRenders) {
         this.useExistingRenders = useExistingRenders;
         settings.setBoolean(CONTROLLER_USE_EXISTING_RENDERS, useExistingRenders);
     }
@@ -488,124 +488,124 @@ public class Controller {
         }
     }
 
-private BufferedImage createFloorplanStamp(BufferedImage image) throws IOException {
-    int width = image.getWidth();
-    int height = image.getHeight();
-    BufferedImage stamp = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    private BufferedImage createFloorplanStamp(BufferedImage image) throws IOException {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        BufferedImage stamp = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
-    // 1. Create initial stamp
-    for (int y = 0; y < height; y++) {
+        // 1. Create initial stamp
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (isBackgroundColor(image.getRGB(x, y), AutoCrop.CROP_COLOR.getRGB(), transparencyThreshold)) {
+                    stamp.setRGB(x, y, Color.BLACK.getRGB());
+                } else {
+                    stamp.setRGB(x, y, Color.WHITE.getRGB());
+                }
+            }
+        }
+
+        // 2. Flood-fill the exterior from the borders
+        Queue<Point> queue = new LinkedList<>();
+
+        // Add all black border pixels to the queue
         for (int x = 0; x < width; x++) {
-            if (isBackgroundColor(image.getRGB(x, y), AutoCrop.CROP_COLOR.getRGB(), transparencyThreshold)) {
-                stamp.setRGB(x, y, Color.BLACK.getRGB());
-            } else {
-                stamp.setRGB(x, y, Color.WHITE.getRGB());
+            if (stamp.getRGB(x, 0) == Color.BLACK.getRGB()) {
+                queue.add(new Point(x, 0));
+            }
+            if (stamp.getRGB(x, height - 1) == Color.BLACK.getRGB()) {
+                queue.add(new Point(x, height - 1));
             }
         }
-    }
-
-    // 2. Flood-fill the exterior from the borders
-    Queue<Point> queue = new LinkedList<>();
-
-    // Add all black border pixels to the queue
-    for (int x = 0; x < width; x++) {
-        if (stamp.getRGB(x, 0) == Color.BLACK.getRGB()) {
-            queue.add(new Point(x, 0));
-        }
-        if (stamp.getRGB(x, height - 1) == Color.BLACK.getRGB()) {
-            queue.add(new Point(x, height - 1));
-        }
-    }
-    for (int y = 1; y < height - 1; y++) {
-        if (stamp.getRGB(0, y) == Color.BLACK.getRGB()) {
-            queue.add(new Point(0, y));
-        }
-        if (stamp.getRGB(width - 1, y) == Color.BLACK.getRGB()) {
-            queue.add(new Point(width - 1, y));
-        }
-    }
-
-    // Temporary color for flood fill
-    int gray = Color.GRAY.getRGB();
-
-    while (!queue.isEmpty()) {
-        Point p = queue.poll();
-        int x = p.x;
-        int y = p.y;
-
-        if (x < 0 || x >= width || y < 0 || y >= height || stamp.getRGB(x, y) != Color.BLACK.getRGB()) {
-            continue;
-        }
-
-        stamp.setRGB(x, y, gray);
-
-        queue.add(new Point(x + 1, y));
-        queue.add(new Point(x - 1, y));
-        queue.add(new Point(x, y + 1));
-        queue.add(new Point(x, y - 1));
-    }
-
-    // 3. Fill holes and restore background
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            int color = stamp.getRGB(x, y);
-            if (color == Color.BLACK.getRGB()) {
-                stamp.setRGB(x, y, Color.WHITE.getRGB()); // Fill hole
-            } else if (color == gray) {
-                stamp.setRGB(x, y, Color.BLACK.getRGB()); // Restore background
+        for (int y = 1; y < height - 1; y++) {
+            if (stamp.getRGB(0, y) == Color.BLACK.getRGB()) {
+                queue.add(new Point(0, y));
+            }
+            if (stamp.getRGB(width - 1, y) == Color.BLACK.getRGB()) {
+                queue.add(new Point(width - 1, y));
             }
         }
-    }
 
-    File stampFile = new File(outputFloorplanDirectoryName + File.separator + "stamp.png");
-    ImageIO.write(stamp, "png", stampFile);
+        // Temporary color for flood fill
+        int gray = Color.GRAY.getRGB();
 
-    return stamp;
-}
+        while (!queue.isEmpty()) {
+            Point p = queue.poll();
+            int x = p.x;
+            int y = p.y;
 
-private BufferedImage applyFloorplanStamp(BufferedImage image, BufferedImage stamp) {
-    AutoCrop cropper = new AutoCrop();
-    BufferedImage croppedStamp = cropper.crop(stamp, cropArea, maintainAspectRatio, renderWidth, renderHeight);
+            if (x < 0 || x >= width || y < 0 || y >= height || stamp.getRGB(x, y) != Color.BLACK.getRGB()) {
+                continue;
+            }
 
-    BufferedImage finalImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
-    for (int y = 0; y < image.getHeight(); y++) {
-        for (int x = 0; x < image.getWidth(); x++) {
-            if ((croppedStamp.getRGB(x, y) & 0x00FFFFFF) == 0) {
-                finalImage.setRGB(x, y, 0x00000000);
-            } else {
-                finalImage.setRGB(x, y, image.getRGB(x, y));
+            stamp.setRGB(x, y, gray);
+
+            queue.add(new Point(x + 1, y));
+            queue.add(new Point(x - 1, y));
+            queue.add(new Point(x, y + 1));
+            queue.add(new Point(x, y - 1));
+        }
+
+        // 3. Fill holes and restore background
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int color = stamp.getRGB(x, y);
+                if (color == Color.BLACK.getRGB()) {
+                    stamp.setRGB(x, y, Color.WHITE.getRGB()); // Fill hole
+                } else if (color == gray) {
+                    stamp.setRGB(x, y, Color.BLACK.getRGB()); // Restore background
+                }
             }
         }
+
+        File stampFile = new File(outputFloorplanDirectoryName + File.separator + "stamp.png");
+        ImageIO.write(stamp, "png", stampFile);
+
+        return stamp;
     }
-    return finalImage;
-}
 
-private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
-    int width = stamp.getWidth();
-    int height = stamp.getHeight();
-    int minX = width;
-    int minY = height;
-    int maxX = -1;
-    int maxY = -1;
+    private BufferedImage applyFloorplanStamp(BufferedImage image, BufferedImage stamp) {
+        AutoCrop cropper = new AutoCrop();
+        BufferedImage croppedStamp = cropper.crop(stamp, cropArea, maintainAspectRatio, renderWidth, renderHeight);
 
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            // Check for non-black pixels
-            if ((stamp.getRGB(x, y) & 0x00FFFFFF) != 0) {
-                if (x < minX) minX = x;
-                if (y < minY) minY = y;
-                if (x > maxX) maxX = x;
-                if (y > maxY) maxY = y;
+        BufferedImage finalImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if ((croppedStamp.getRGB(x, y) & 0x00FFFFFF) == 0) {
+                    finalImage.setRGB(x, y, 0x00000000);
+                } else {
+                    finalImage.setRGB(x, y, image.getRGB(x, y));
+                }
             }
         }
+        return finalImage;
     }
 
-    if (maxX == -1) { // Stamp is all black
-        return new Rectangle(0, 0, width, height);
-    }
+    private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
+        int width = stamp.getWidth();
+        int height = stamp.getHeight();
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
 
-    return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
-}
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                // Check for non-black pixels
+                if ((stamp.getRGB(x, y) & 0x00FFFFFF) != 0) {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+
+        if (maxX == -1) { // Stamp is all black
+            return new Rectangle(0, 0, width, height);
+        }
+
+        return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
 
     private void addEligibleFurnitureToMap(Map<String, List<HomePieceOfFurniture>> furnitureByName, List<HomePieceOfFurniture> lightsFromOtherLevels, List<HomePieceOfFurniture> furnitureList) {
         for (HomePieceOfFurniture piece : furnitureList) {
@@ -708,12 +708,12 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
     }
 
     private void buildScenes() {
-        int oldNumberOfTotaleRenders = getNumberOfTotalRenders();
+        int oldNumberOfTotalRenders = getNumberOfTotalRenders();
         scenes = new Scenes(camera);
         scenes.setRenderingTimes(renderDateTimes);
         scenes.setEntitiesToShowOrHide(otherEntities.stream().filter(entity -> { return entity.getDisplayFurnitureCondition() != Entity.DisplayFurnitureCondition.ALWAYS; }).collect(Collectors.toList()));
         scenes.setEntitiesToOpenOrClose(otherEntities.stream().filter(entity -> { return entity.getOpenFurnitureCondition() != Entity.OpenFurnitureCondition.ALWAYS; }).collect(Collectors.toList()));
-        propertyChangeSupport.firePropertyChange(Property.NUMBER_OF_RENDERS.name(), oldNumberOfTotaleRenders, getNumberOfTotalRenders());
+        propertyChangeSupport.firePropertyChange(Property.NUMBER_OF_RENDERS.name(), oldNumberOfTotalRenders, getNumberOfTotalRenders());
     }
 
     private boolean isHomeAssistantEntity(String name) {
@@ -790,7 +790,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             }
 
             // Apply stamp before green removal, as stamp provides the definitive outer boundary.
-        if (cropArea != null && stencilMask != null) {
+            if (cropArea != null && stencilMask != null) {
                 processedImage = applyFloorplanStamp(processedImage, stencilMask);
             }
 
@@ -1162,14 +1162,14 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
     }
 
     private boolean doStateIconsIntersect(Entity first, Entity second) {
-        final double STATE_ICON_RAIDUS_INCLUDING_MARGIN = 25.0;
+        final double STATE_ICON_RADIUS_INCLUDING_MARGIN = 25.0;
 
         Point2d firstPositionInPixels = new Point2d(first.getPosition().x / 100.0 * renderWidth, first.getPosition().y / 100 * renderHeight);
         Point2d secondPositionInPixels = new Point2d(second.getPosition().x / 100.0 * renderWidth, second.getPosition().y / 100 * renderHeight);
 
         double x = Math.pow(firstPositionInPixels.x - secondPositionInPixels.x, 2) + Math.pow(firstPositionInPixels.y - secondPositionInPixels.y, 2);
 
-        return x <= Math.pow(STATE_ICON_RAIDUS_INCLUDING_MARGIN * 2, 2);
+        return x <= Math.pow(STATE_ICON_RADIUS_INCLUDING_MARGIN * 2, 2);
     }
 
     private boolean doesStateIconIntersectWithSet(Entity entity, Set<Entity> entities) {
@@ -1202,9 +1202,9 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
 
         Stream.concat(lightEntities.stream(), otherEntities.stream())
             .forEach(entity -> {
-                Set<Entity> interectingSet = setWithWhichStateIconIntersects(entity, intersectingStateIcons);
-                if (interectingSet != null) {
-                    interectingSet.add(entity);
+                Set<Entity> intersectingSet = setWithWhichStateIconIntersects(entity, intersectingStateIcons);
+                if (intersectingSet != null) {
+                    intersectingSet.add(entity);
                     return;
                 }
                 Optional<Entity> intersectingStateIcon = stateIconWithWhichStateIconIntersects(entity);
@@ -1220,20 +1220,20 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
     }
 
     private Point2d getCenterOfStateIcons(Set<Entity> entities) {
-        Point2d centerPostition = new Point2d();
+        Point2d centerPosition = new Point2d();
         for (Entity entity : entities )
-            centerPostition.add(entity.getPosition());
-        centerPostition.scale(1.0 / entities.size());
-        return centerPostition;
+            centerPosition.add(entity.getPosition());
+        centerPosition.scale(1.0 / entities.size());
+        return centerPosition;
     }
 
     private void separateStateIcons(Set<Entity> entities) {
         final double STEP_SIZE = 2.0;
 
-        Point2d centerPostition = getCenterOfStateIcons(entities);
+        Point2d centerPosition = getCenterOfStateIcons(entities);
 
         for (Entity entity : entities) {
-            Vector2d direction = new Vector2d(entity.getPosition().x - centerPostition.x, entity.getPosition().y - centerPostition.y);
+            Vector2d direction = new Vector2d(entity.getPosition().x - centerPosition.x, entity.getPosition().y - centerPosition.y);
 
             if (direction.length() == 0) {
                 double[] randomRepeatableDirection = { entity.getId().hashCode(), entity.getName().hashCode() };
@@ -1255,6 +1255,10 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
             for (Set<Entity> set : intersectingStateIcons)
                 separateStateIcons(set);
         }
+    }
+
+    private boolean isCeilingLight(Entity light) {
+        return light.getName().toLowerCase().contains(CEILING_LIGHT_NAME_KEYWORD);
     }
 
     private BufferedImage processImage(String imageName, List<Entity> onLights, BufferedImage baseImage, BufferedImage stencilMask) throws IOException, InterruptedException {
@@ -1298,7 +1302,7 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
 
                     // If the light is on, override the power with the desired intensity
                     if (isLightOn) {
-                        float intensity = light.getName().toLowerCase().contains("deckenlampe")
+                        float intensity = isCeilingLight(light)
                             ? renderCeilingLightsIntensity
                             : renderOtherLightsIntensity;
                         for (HomePieceOfFurniture piece : light.getPiecesOfFurniture()) {
@@ -1349,9 +1353,9 @@ private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
                             if (piece instanceof HomeLight) {
                                 HomeLight homeLight = (HomeLight) piece;
                                 originalPowers.put(homeLight, homeLight.getPower());
-                                float intensity = light.getName().toLowerCase().contains("deckenlampe")
-                                ? ceilingLightsIntensity
-                                : otherLightsIntensity;
+                                float intensity = isCeilingLight(light)
+                                    ? ceilingLightsIntensity
+                                    : otherLightsIntensity;
                                 homeLight.setPower(intensity / 100.0f);
                             }
                         }
