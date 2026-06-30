@@ -95,6 +95,7 @@ public class Controller {
     private static final String CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY = "renderCeilingLightsIntensity";
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
     private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
+    private static final String CONTROLLER_STAMP_SMOOTHING = "stampSmoothing";
 
     private Home home;
     private Settings settings;
@@ -127,6 +128,7 @@ public class Controller {
     private int renderCeilingLightsIntensity;
     private int renderOtherLightsIntensity;
     private boolean createRoomSelectors;
+    private int stampSmoothing;
     private Rectangle cropArea = null;
     private Scenes scenes;
 
@@ -163,6 +165,7 @@ public class Controller {
         renderCeilingLightsIntensity = settings.getInteger(CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY, 20);
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
         createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
+        stampSmoothing = settings.getInteger(CONTROLLER_STAMP_SMOOTHING, 0);
     }
 
     public void addPropertyChangeListener(Property property, PropertyChangeListener listener) {
@@ -382,6 +385,15 @@ public class Controller {
         settings.setBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, createRoomSelectors);
     }
 
+    public int getStampSmoothing() {
+        return stampSmoothing;
+    }
+
+    public void setStampSmoothing(int stampSmoothing) {
+        this.stampSmoothing = stampSmoothing;
+        settings.setInteger(CONTROLLER_STAMP_SMOOTHING, stampSmoothing);
+    }
+
     public void stop() {
         if (photoRenderer != null) {
             photoRenderer.stop();
@@ -567,17 +579,78 @@ public class Controller {
         AutoCrop cropper = new AutoCrop();
         BufferedImage croppedStamp = cropper.crop(stamp, cropArea, maintainAspectRatio, renderWidth, renderHeight);
 
-        BufferedImage finalImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < image.getHeight(); y++) {
-            for (int x = 0; x < image.getWidth(); x++) {
-                if ((croppedStamp.getRGB(x, y) & 0x00FFFFFF) == 0) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        // Coverage is 1.0 inside the stamp (white) and 0.0 outside (black). When
+        // smoothing is enabled the binary mask is blurred so the cut-out edge
+        // fades smoothly instead of staying hard/jagged.
+        float[] coverage = buildStampCoverage(croppedStamp, stampSmoothing);
+
+        BufferedImage finalImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                float c = coverage[y * width + x];
+                if (c <= 0f) {
                     finalImage.setRGB(x, y, 0x00000000);
-                } else {
-                    finalImage.setRGB(x, y, image.getRGB(x, y));
+                    continue;
                 }
+                int source = image.getRGB(x, y);
+                int sourceAlpha = (source >>> 24) & 0xFF;
+                int alpha = Math.min(255, Math.round(sourceAlpha * c));
+                finalImage.setRGB(x, y, (alpha << 24) | (source & 0x00FFFFFF));
             }
         }
         return finalImage;
+    }
+
+    private float[] buildStampCoverage(BufferedImage stamp, int smoothing) {
+        int width = stamp.getWidth();
+        int height = stamp.getHeight();
+        float[] coverage = new float[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                // Anything that isn't white (i.e. black) is outside the floor plan.
+                coverage[y * width + x] = (stamp.getRGB(x, y) & 0x00FFFFFF) != 0 ? 1f : 0f;
+            }
+        }
+        if (smoothing <= 0)
+            return coverage;
+        return boxBlur(coverage, width, height, smoothing);
+    }
+
+    private float[] boxBlur(float[] source, int width, int height, int radius) {
+        float[] horizontal = new float[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                float sum = 0f;
+                int count = 0;
+                for (int k = -radius; k <= radius; k++) {
+                    int xx = x + k;
+                    if (xx < 0 || xx >= width)
+                        continue;
+                    sum += source[y * width + xx];
+                    count++;
+                }
+                horizontal[y * width + x] = sum / count;
+            }
+        }
+
+        float[] blurred = new float[width * height];
+        for (int x = 0; x < width; x++) {
+            for (int y = 0; y < height; y++) {
+                float sum = 0f;
+                int count = 0;
+                for (int k = -radius; k <= radius; k++) {
+                    int yy = y + k;
+                    if (yy < 0 || yy >= height)
+                        continue;
+                    sum += horizontal[yy * width + x];
+                    count++;
+                }
+                blurred[y * width + x] = sum / count;
+            }
+        }
+        return blurred;
     }
 
     private Rectangle findCropAreaFromStamp(BufferedImage stamp) {
@@ -849,8 +922,8 @@ public class Controller {
                 if (isBackgroundColor(rgb, AutoCrop.CROP_COLOR.getRGB(), transparencyThreshold)) {
                     transparentImage.setRGB(x, y, 0x00000000);
                 } else {
-                    // Keep original pixel with full alpha
-                    transparentImage.setRGB(x, y, rgb | 0xFF000000);
+                    // Keep original pixel, preserving any feathered alpha from the stamp
+                    transparentImage.setRGB(x, y, rgb);
                 }
             }
         }

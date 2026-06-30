@@ -121,6 +121,8 @@ public class Panel extends JPanel implements DialogView {
     private JCheckBox createRoomSelectorsCheckbox;
     private JLabel transparencyThresholdLabel;
     private JSpinner transparencyThresholdSpinner;
+    private JLabel stampSmoothingLabel;
+    private JSpinner stampSmoothingSpinner;
     private StatusProgressBar progressBar;
     private JButton startButton;
     private JButton closeButton;
@@ -568,6 +570,18 @@ public class Panel extends JPanel implements DialogView {
             }
         });
 
+        stampSmoothingLabel = new JLabel();
+        stampSmoothingLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.stampSmoothingLabel.text"));
+        stampSmoothingLabel.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.stampSmoothingLabel.tooltip"));
+        final SpinnerNumberModel stampSmoothingSpinnerModel = new SpinnerNumberModel(0, 0, 50, 1);
+        stampSmoothingSpinner = new AutoCommitSpinner(stampSmoothingSpinnerModel);
+        stampSmoothingSpinnerModel.setValue(controller.getStampSmoothing());
+        stampSmoothingSpinner.addChangeListener(new ChangeListener() {
+            public void stateChanged(ChangeEvent ev) {
+              controller.setStampSmoothing(((Number)stampSmoothingSpinner.getValue()).intValue());
+            }
+        });
+
         outputDirectoryLabel = new JLabel();
         outputDirectoryLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.outputDirectoryLabel.text"));
         outputDirectoryTextField = new JTextField(20);
@@ -662,6 +676,7 @@ public class Panel extends JPanel implements DialogView {
         useExistingRendersCheckbox.setEnabled(enabled);
         enableFloorPlanPostProcessingCheckbox.setEnabled(enabled);
         transparencyThresholdSpinner.setEnabled(enabled);
+        stampSmoothingSpinner.setEnabled(enabled);
         maintainAspectRatioCheckbox.setEnabled(enabled);
         generateFloorplanYamlCheckbox.setEnabled(enabled);
         createRoomSelectorsCheckbox.setEnabled(enabled);
@@ -680,6 +695,8 @@ public class Panel extends JPanel implements DialogView {
         maintainAspectRatioCheckbox.setVisible(postProcessingEnabled);
         transparencyThresholdLabel.setVisible(postProcessingEnabled);
         transparencyThresholdSpinner.setVisible(postProcessingEnabled);
+        stampSmoothingLabel.setVisible(postProcessingEnabled);
+        stampSmoothingSpinner.setVisible(postProcessingEnabled);
     }
 
     private void layoutComponents() {
@@ -771,6 +788,12 @@ public class Panel extends JPanel implements DialogView {
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
         generalSettingsPanel.add(transparencyThresholdSpinner, new GridBagConstraints(
             1, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        generalSettingsPanel.add(stampSmoothingLabel, new GridBagConstraints(
+            2, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        generalSettingsPanel.add(stampSmoothingSpinner, new GridBagConstraints(
+            3, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
         generalSettingsPanelGridYIndex++;
 
