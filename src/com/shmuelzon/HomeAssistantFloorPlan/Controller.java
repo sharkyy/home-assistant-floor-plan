@@ -9,7 +9,6 @@ import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
-import java.awt.Point;
 import java.awt.Rectangle;
 import java.io.File;
 import java.io.IOException;
@@ -26,12 +25,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -44,6 +41,7 @@ import javax.vecmath.Vector4d;
 
 import com.eteks.sweethome3d.j3d.AbstractPhotoRenderer;
 import com.eteks.sweethome3d.model.Camera;
+import com.eteks.sweethome3d.model.Compass;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeFurnitureGroup;
 import com.eteks.sweethome3d.model.HomeLight;
@@ -77,6 +75,15 @@ public class Controller {
 
     private static final String TRANSPARENT_IMAGE_NAME = "transparent";
     private static final String CEILING_LIGHT_NAME_KEYWORD = "deckenlampe";
+    // Minimum amount by which green must exceed red and blue for a pixel to be
+    // treated as the chroma-key background while building the stamp. Keeps the
+    // detection brightness-independent so the green key is still recognised when
+    // the scene is rendered dark (e.g. at a night render time).
+    private static final int STAMP_BACKGROUND_GREEN_MARGIN = 16;
+    // The stamp is a binary mask: INSIDE marks pixels that belong to the floor
+    // plan, OUTSIDE marks the chroma-key background that gets cut away.
+    private static final int STAMP_INSIDE = Color.WHITE.getRGB();
+    private static final int STAMP_OUTSIDE = Color.BLACK.getRGB();
 
     private static final String CONTROLLER_RENDER_WIDTH = "renderWidth";
     private static final String CONTROLLER_RENDER_HEIGHT = "renderHeigh";
@@ -130,6 +137,11 @@ public class Controller {
     private boolean createRoomSelectors;
     private int stampSmoothing;
     private Rectangle cropArea = null;
+    // Cropped (and optionally blurred) stamp coverage, computed once per render
+    // and reused for every processed image since it never changes within a run.
+    private float[] stampCoverage;
+    private int stampCoverageWidth;
+    private int stampCoverageHeight;
     private Scenes scenes;
 
     public Controller(Home home) {
@@ -409,6 +421,7 @@ public class Controller {
         numberOfCompletedRenders = 0;
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Starting render..."));
         cropArea = null;
+        stampCoverage = null;
         int originalSkyColor = home.getEnvironment().getSkyColor();
         int originalGroundColor = home.getEnvironment().getGroundColor();
         BufferedImage stencilMask = null;
@@ -425,7 +438,12 @@ public class Controller {
                 } else {
                     home.getEnvironment().setSkyColor(AutoCrop.CROP_COLOR.getRGB());
                     home.getEnvironment().setGroundColor(AutoCrop.CROP_COLOR.getRGB());
-                    camera.setTime(renderDateTimes.get(0));
+                    // Render the stamp at the brightest moment of the render day so
+                    // the green chroma key stays as bright as possible, regardless of
+                    // the (possibly night-time) render times the user configured. The
+                    // stamp is only used for its silhouette, so the exact time is
+                    // irrelevant - it just needs the key to be easy to detect.
+                    camera.setTime(brightestTimeOfDay(renderDateTimes.get(0)));
                     BufferedImage tempBaseImage = renderScene();
                     stencilMask = createFloorplanStamp(tempBaseImage);
                     home.getEnvironment().setSkyColor(originalSkyColor);
@@ -506,69 +524,26 @@ public class Controller {
     private BufferedImage createFloorplanStamp(BufferedImage image) throws IOException {
         int width = image.getWidth();
         int height = image.getHeight();
+
+        // 1. Classify every pixel: background where it shows the chroma key
+        //    (sky/ground), foreground where it belongs to the floor plan.
+        boolean[] background = new boolean[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                background[y * width + x] = isStampBackgroundColor(image.getRGB(x, y));
+            }
+        }
+
+        // 2. Flood-fill the background reachable from the image border. Only this
+        //    "exterior" gets cut away; background fully enclosed by the floor plan
+        //    (e.g. an interior courtyard) is kept so the silhouette stays solid.
+        boolean[] exterior = findExteriorBackground(background, width, height);
+
+        // 3. Build the binary mask: everything that is not exterior is inside.
         BufferedImage stamp = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-
-        // 1. Create initial stamp
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                if (isBackgroundColor(image.getRGB(x, y), AutoCrop.CROP_COLOR.getRGB(), transparencyThreshold)) {
-                    stamp.setRGB(x, y, Color.BLACK.getRGB());
-                } else {
-                    stamp.setRGB(x, y, Color.WHITE.getRGB());
-                }
-            }
-        }
-
-        // 2. Flood-fill the exterior from the borders
-        Queue<Point> queue = new LinkedList<>();
-
-        // Add all black border pixels to the queue
-        for (int x = 0; x < width; x++) {
-            if (stamp.getRGB(x, 0) == Color.BLACK.getRGB()) {
-                queue.add(new Point(x, 0));
-            }
-            if (stamp.getRGB(x, height - 1) == Color.BLACK.getRGB()) {
-                queue.add(new Point(x, height - 1));
-            }
-        }
-        for (int y = 1; y < height - 1; y++) {
-            if (stamp.getRGB(0, y) == Color.BLACK.getRGB()) {
-                queue.add(new Point(0, y));
-            }
-            if (stamp.getRGB(width - 1, y) == Color.BLACK.getRGB()) {
-                queue.add(new Point(width - 1, y));
-            }
-        }
-
-        // Temporary color for flood fill
-        int gray = Color.GRAY.getRGB();
-
-        while (!queue.isEmpty()) {
-            Point p = queue.poll();
-            int x = p.x;
-            int y = p.y;
-
-            if (x < 0 || x >= width || y < 0 || y >= height || stamp.getRGB(x, y) != Color.BLACK.getRGB()) {
-                continue;
-            }
-
-            stamp.setRGB(x, y, gray);
-
-            queue.add(new Point(x + 1, y));
-            queue.add(new Point(x - 1, y));
-            queue.add(new Point(x, y + 1));
-            queue.add(new Point(x, y - 1));
-        }
-
-        // 3. Fill holes and restore background
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int color = stamp.getRGB(x, y);
-                if (color == Color.BLACK.getRGB()) {
-                    stamp.setRGB(x, y, Color.WHITE.getRGB()); // Fill hole
-                } else if (color == gray) {
-                    stamp.setRGB(x, y, Color.BLACK.getRGB()); // Restore background
-                }
+                stamp.setRGB(x, y, exterior[y * width + x] ? STAMP_OUTSIDE : STAMP_INSIDE);
             }
         }
 
@@ -578,21 +553,82 @@ public class Controller {
         return stamp;
     }
 
+    // Marks every background pixel connected to the image border via an
+    // iterative flood fill. Each pixel is marked before being pushed, so it
+    // enters the stack at most once - keeping memory bounded by the pixel count
+    // even on large renders (the previous queue re-enqueued every neighbour).
+    private boolean[] findExteriorBackground(boolean[] background, int width, int height) {
+        boolean[] exterior = new boolean[width * height];
+        int[] stack = new int[width * height];
+        int top = 0;
+
+        for (int x = 0; x < width; x++) {
+            top = pushIfBackground(background, exterior, stack, top, x, 0, width);
+            top = pushIfBackground(background, exterior, stack, top, x, height - 1, width);
+        }
+        for (int y = 0; y < height; y++) {
+            top = pushIfBackground(background, exterior, stack, top, 0, y, width);
+            top = pushIfBackground(background, exterior, stack, top, width - 1, y, width);
+        }
+
+        while (top > 0) {
+            int index = stack[--top];
+            int x = index % width;
+            int y = index / width;
+            if (x > 0)          top = pushIfBackground(background, exterior, stack, top, x - 1, y, width);
+            if (x < width - 1)  top = pushIfBackground(background, exterior, stack, top, x + 1, y, width);
+            if (y > 0)          top = pushIfBackground(background, exterior, stack, top, x, y - 1, width);
+            if (y < height - 1) top = pushIfBackground(background, exterior, stack, top, x, y + 1, width);
+        }
+
+        return exterior;
+    }
+
+    private int pushIfBackground(boolean[] background, boolean[] exterior, int[] stack, int top, int x, int y, int width) {
+        int index = y * width + x;
+        if (background[index] && !exterior[index]) {
+            exterior[index] = true;
+            stack[top++] = index;
+        }
+        return top;
+    }
+
+    // Finds the moment of highest sun elevation within the 24h following the
+    // given reference time, using the home's compass (location/north). Scanning
+    // a full day always covers solar noon, so the result is the brightest time
+    // at this location. Falls back to the reference time when no compass exists.
+    private long brightestTimeOfDay(long referenceTime) {
+        Compass compass = home.getCompass();
+        if (compass == null)
+            return referenceTime;
+
+        long step = 15 * 60 * 1000L;       // 15 minutes
+        long oneDay = 24 * 60 * 60 * 1000L;
+        long brightestTime = referenceTime;
+        float highestElevation = compass.getSunElevation(referenceTime);
+        for (long time = referenceTime; time < referenceTime + oneDay; time += step) {
+            float elevation = compass.getSunElevation(time);
+            if (elevation > highestElevation) {
+                highestElevation = elevation;
+                brightestTime = time;
+            }
+        }
+        return brightestTime;
+    }
+
     private BufferedImage applyFloorplanStamp(BufferedImage image, BufferedImage stamp) {
-        AutoCrop cropper = new AutoCrop();
-        BufferedImage croppedStamp = cropper.crop(stamp, cropArea, maintainAspectRatio, renderWidth, renderHeight);
+        float[] coverage = getStampCoverage(stamp);
+        int coverageWidth = stampCoverageWidth;
+        int coverageHeight = stampCoverageHeight;
 
         int width = image.getWidth();
         int height = image.getHeight();
-        // Coverage is 1.0 inside the stamp (white) and 0.0 outside (black). When
-        // smoothing is enabled the binary mask is blurred so the cut-out edge
-        // fades smoothly instead of staying hard/jagged.
-        float[] coverage = buildStampCoverage(croppedStamp, stampSmoothing);
-
         BufferedImage finalImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                float c = coverage[y * width + x];
+                // Coverage is indexed by its own width and only covers the area
+                // it was built for; anything outside that is fully transparent.
+                float c = (x < coverageWidth && y < coverageHeight) ? coverage[y * coverageWidth + x] : 0f;
                 if (c <= 0f) {
                     finalImage.setRGB(x, y, 0x00000000);
                     continue;
@@ -606,14 +642,30 @@ public class Controller {
         return finalImage;
     }
 
+    // Returns the stamp coverage cropped to the render area, computing it once
+    // and caching it: cropArea, smoothing and the stamp are all fixed for the
+    // duration of a render, so every processed image shares the same coverage.
+    private float[] getStampCoverage(BufferedImage stamp) {
+        if (stampCoverage == null) {
+            BufferedImage croppedStamp = new AutoCrop().crop(stamp, cropArea, maintainAspectRatio, renderWidth, renderHeight);
+            stampCoverageWidth = croppedStamp.getWidth();
+            stampCoverageHeight = croppedStamp.getHeight();
+            stampCoverage = buildStampCoverage(croppedStamp, stampSmoothing);
+        }
+        return stampCoverage;
+    }
+
     private float[] buildStampCoverage(BufferedImage stamp, int smoothing) {
         int width = stamp.getWidth();
         int height = stamp.getHeight();
+        // Coverage is 1.0 inside the stamp and 0.0 outside. When smoothing is
+        // enabled the binary mask is blurred so the cut-out edge fades smoothly
+        // instead of staying hard/jagged.
         float[] coverage = new float[width * height];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                // Anything that isn't white (i.e. black) is outside the floor plan.
-                coverage[y * width + x] = (stamp.getRGB(x, y) & 0x00FFFFFF) != 0 ? 1f : 0f;
+                // Anything that isn't the OUTSIDE colour belongs to the floor plan.
+                coverage[y * width + x] = (stamp.getRGB(x, y) & 0x00FFFFFF) != (STAMP_OUTSIDE & 0x00FFFFFF) ? 1f : 0f;
             }
         }
         if (smoothing <= 0)
@@ -666,8 +718,8 @@ public class Controller {
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                // Check for non-black pixels
-                if ((stamp.getRGB(x, y) & 0x00FFFFFF) != 0) {
+                // Check for inside (non-OUTSIDE) pixels
+                if ((stamp.getRGB(x, y) & 0x00FFFFFF) != (STAMP_OUTSIDE & 0x00FFFFFF)) {
                     if (x < minX) minX = x;
                     if (y < minY) minY = y;
                     if (x > maxX) maxX = x;
@@ -676,7 +728,7 @@ public class Controller {
             }
         }
 
-        if (maxX == -1) { // Stamp is all black
+        if (maxX == -1) { // Stamp is entirely outside
             return new Rectangle(0, 0, width, height);
         }
 
@@ -878,26 +930,18 @@ public class Controller {
         BufferedImage processedImage = image;
 
         if (enableFloorPlanPostProcessing) {
-            // Step 1: Apply stencil mask
-            if (cropArea != null && stencilMask != null) {
-                processedImage = applyFloorplanStamp(processedImage, stencilMask);
-            }
-
-            // Step 2: Crop to the outer bounds of the stamp
+            // Mirror the floor plan image pipeline (crop, then stamp) so the room
+            // selector aligns pixel-for-pixel with the base and light images. The
+            // previous order stamped the full uncropped frame, which left the
+            // cut-out mask offset from the cropped/scaled floor plan. There is no
+            // green to strip here, so removeGreenBackground is not needed.
             if (cropArea != null) {
                 AutoCrop cropper = new AutoCrop();
-                // Perform the crop, but don't scale it back up yet.
-                processedImage = cropper.crop(processedImage, cropArea, false, cropArea.width, cropArea.height);
+                processedImage = cropper.crop(image, cropArea, maintainAspectRatio, renderWidth, renderHeight);
             }
 
-            // Step 3: Scale the cropped image back to the original target resolution
-            if (processedImage.getWidth() != renderWidth || processedImage.getHeight() != renderHeight) {
-                BufferedImage finalImage = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D g = finalImage.createGraphics();
-                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                g.drawImage(processedImage, 0, 0, renderWidth, renderHeight, null);
-                g.dispose();
-                processedImage = finalImage;
+            if (cropArea != null && stencilMask != null) {
+                processedImage = applyFloorplanStamp(processedImage, stencilMask);
             }
         }
 
@@ -921,6 +965,22 @@ public class Controller {
         }
         
         return transparentImage;
+    }
+
+    private boolean isStampBackgroundColor(int rgb) {
+        // The stamp render paints sky and ground with the pure-green chroma key
+        // (0,255,0). A daytime render keeps that key near pure green, but a night
+        // render dims it to a dark green (e.g. 0,40,0) that no longer sits within
+        // transparencyThreshold of pure green, which made the stamp come out
+        // blank for night render times. The key stays strongly green-dominant at
+        // any brightness, so detect the background by its green bias instead of
+        // its distance to a fixed green; this also subsumes the pure-green case.
+        // Interior false positives are harmless because the flood fill only cuts
+        // out background that is connected to the image border.
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        return g - r >= STAMP_BACKGROUND_GREEN_MARGIN && g - b >= STAMP_BACKGROUND_GREEN_MARGIN;
     }
 
     private boolean isBackgroundColor(int color1, int background, int tolerance) {
