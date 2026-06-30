@@ -450,6 +450,17 @@ public class Controller {
                 yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(0), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_day", false);
             }
 
+            // Render the dimmed night ambiance before the per-room light
+            // combinations so those combinations are layered on top of it with
+            // the lighten blend mode instead of being hidden behind it.
+            if (renderDateTimes.size() > 1) {
+                camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
+                processImage("base_night", null, null, stencilMask);
+                if (generateFloorplanYaml) {
+                    yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night", false);
+                }
+            }
+
             for (String group : lightsGroups.keySet()) {
                 List<Entity> groupLights = lightsGroups.get(group);
                 long renderTime = renderDateTimes.get(renderDateTimes.size() - 1);
@@ -469,14 +480,6 @@ public class Controller {
                         Scene nightScene = new Scene(camera, renderDateTimes, renderTime, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
                         yaml += generateLightYaml(nightScene, groupLights, onLights, imageName);
                     }
-                }
-            }
-
-            if (renderDateTimes.size() > 1) {
-                camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
-                processImage("base_night", null, null, stencilMask);
-                if (generateFloorplanYaml) {
-                    yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night", false);
                 }
             }
 

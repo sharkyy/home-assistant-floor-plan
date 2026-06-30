@@ -36,15 +36,17 @@ For each floor plan the plugin renders three kinds of images:
 
 1. **Base day** - A single daytime image of the whole floor with all lights
    off. It is the background shown while the sun is above the horizon.
-2. **Base night** - A single night-time image of the whole floor, used as the
-   background shown while the sun is below the horizon.
+2. **Base night** - A single night-time image of the whole floor with all
+   lights dimmed, used as the dimmed ambient background while the sun is below
+   the horizon.
 3. **Per-room night renders** - For every room, all on/off combinations of the
    lights located in that room are rendered at night. Lights that are not
    inside any room are rendered individually.
 
-In Home Assistant the per-room images are overlaid on the night background with
-the `lighten` blend mode, so the rooms whose lights are on light up according
-to the current Home Assistant state.
+In Home Assistant the per-room images are layered on top of the night base
+image with the `lighten` blend mode, so a room only lights up above the dimmed
+ambient when its lights are actually on according to the current Home Assistant
+state.
 
 Because each room renders every combination of its lights, the number of images
 grows quickly with the number of switchable lights per room (`2^n - 1` images
