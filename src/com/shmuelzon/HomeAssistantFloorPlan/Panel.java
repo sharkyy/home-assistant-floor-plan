@@ -18,8 +18,6 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
-import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.stream.Collectors;
 import java.util.Date;
@@ -98,9 +96,6 @@ public class Panel extends JPanel implements DialogView {
     private JLabel renderTimeLabel;
     private SpinnerDateModel renderTimeModel;
     private JSpinner renderTimeSpinner;
-    private JCheckBox nightRenderCheckbox;
-    private SpinnerDateModel nightRenderTimeModel;
-    private JSpinner nightRenderTimeSpinner;
     private JLabel ceilingLightsIntensityLabel;
     private JSpinner ceilingLightsIntensitySpinner;
     private JLabel otherLightsIntensityLabel;
@@ -400,24 +395,11 @@ public class Panel extends JPanel implements DialogView {
             }
         });
 
-        List<Long> renderingTimes = controller.getRenderDateTimes();
         renderTimeLabel = new JLabel();
         renderTimeLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.renderTimeLabel.text"));
         ChangeListener renderTimeChangeListener = new ChangeListener() {
             public void stateChanged(ChangeEvent ev) {
-                List<Long> renderingTimes = new ArrayList<>();
-                LocalDate date = ((Date)renderTimeSpinner.getValue()).toInstant().atZone(timeZone.toZoneId()).toLocalDate();
-                long timestamp = ((Date)renderTimeSpinner.getValue()).getTime();
-
-                renderingTimes.add(timestamp);
-                if (nightRenderTimeSpinner.isVisible()) {
-                    LocalTime nightTime = ((Date)nightRenderTimeSpinner.getValue()).toInstant().atZone(timeZone.toZoneId()).toLocalTime();
-                    long nightTimestamp = date.atTime(nightTime).atZone(timeZone.toZoneId()).toInstant().toEpochMilli();
-                    if (timestamp != nightTimestamp)
-                        renderingTimes.add(nightTimestamp);
-                }
-
-                controller.setRenderDateTimes(new ArrayList<>(renderingTimes));
+                controller.setRenderTime(((Date)renderTimeSpinner.getValue()).getTime());
             }
         };
         renderTimeModel = new SpinnerDateModel();
@@ -430,31 +412,8 @@ public class Panel extends JPanel implements DialogView {
         final DateFormatter timeFormatter = (DateFormatter)timeEditor.getTextField().getFormatter();
         timeFormatter.setAllowsInvalid(false);
         timeFormatter.setOverwriteMode(true);
-        renderTimeModel.setValue(new Date(renderingTimes.get(0)));
+        renderTimeModel.setValue(new Date(controller.getRenderTime()));
         renderTimeSpinner.addChangeListener(renderTimeChangeListener);
-        nightRenderCheckbox = new JCheckBox();
-        nightRenderCheckbox.setText(resource.getString("HomeAssistantFloorPlan.Panel.nightRender.text"));
-        nightRenderCheckbox.setBorder(null);
-        nightRenderCheckbox.setSelected(renderingTimes.size() > 1);
-        nightRenderCheckbox.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent ev) {
-                updatePanelVisibility();
-                renderTimeChangeListener.stateChanged(null);
-            }
-        });
-        nightRenderTimeModel = new SpinnerDateModel();
-        nightRenderTimeSpinner = new JSpinner(nightRenderTimeModel);
-        final JSpinner.DateEditor nightTimeEditor = new JSpinner.DateEditor(nightRenderTimeSpinner);
-        nightTimeEditor.getFormat().setTimeZone(timeZone);
-        nightTimeEditor.getFormat().applyPattern("HH:mm");
-        nightTimeEditor.getTextField().setHorizontalAlignment(JTextField.RIGHT);
-        nightRenderTimeSpinner.setEditor(nightTimeEditor);
-        final DateFormatter nightTimeFormatter = (DateFormatter)nightTimeEditor.getTextField().getFormatter();
-        nightTimeFormatter.setAllowsInvalid(false);
-        nightTimeFormatter.setOverwriteMode(true);
-        nightRenderTimeModel.setValue(new Date(renderingTimes.get(renderingTimes.size() - 1)));
-        nightRenderTimeSpinner.setVisible(nightRenderCheckbox.isSelected());
-        nightRenderTimeSpinner.addChangeListener(renderTimeChangeListener);
 
         ceilingLightsIntensityLabel = new JLabel();
         ceilingLightsIntensityLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.ceilingLightsIntensityLabel.text"));
@@ -465,7 +424,6 @@ public class Panel extends JPanel implements DialogView {
         ((JSpinner.DefaultEditor)ceilingLightsIntensityEditor).getTextField().setColumns(4);
         ceilingLightsIntensitySpinner.setEditor(ceilingLightsIntensityEditor);
         ceilingLightsIntensitySpinnerModel.setValue(controller.getCeilingLightsIntensity());
-        ceilingLightsIntensitySpinner.setVisible(nightRenderCheckbox.isSelected());
         ceilingLightsIntensitySpinner.addChangeListener(new ChangeListener() {
             public void stateChanged(ChangeEvent ev) {
                 controller.setCeilingLightsIntensity(((Number)ceilingLightsIntensitySpinnerModel.getValue()).intValue());
@@ -481,7 +439,6 @@ public class Panel extends JPanel implements DialogView {
         ((JSpinner.DefaultEditor)otherLightsIntensityEditor).getTextField().setColumns(4);
         otherLightsIntensitySpinner.setEditor(otherLightsIntensityEditor);
         otherLightsIntensitySpinnerModel.setValue(controller.getOtherLightsIntensity());
-        otherLightsIntensitySpinner.setVisible(nightRenderCheckbox.isSelected());
         otherLightsIntensitySpinner.addChangeListener(new ChangeListener() {
             public void stateChanged(ChangeEvent ev) {
                 controller.setOtherLightsIntensity(((Number)otherLightsIntensitySpinnerModel.getValue()).intValue());
@@ -666,8 +623,6 @@ public class Panel extends JPanel implements DialogView {
         rendererComboBox.setEnabled(enabled);
         qualityComboBox.setEnabled(enabled);
         renderTimeSpinner.setEnabled(enabled);
-        nightRenderCheckbox.setEnabled(enabled);
-        nightRenderTimeSpinner.setEnabled(enabled);
         ceilingLightsIntensitySpinner.setEnabled(enabled);
         otherLightsIntensitySpinner.setEnabled(enabled);
         imageFormatComboBox.setEnabled(enabled);
@@ -766,12 +721,6 @@ public class Panel extends JPanel implements DialogView {
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
         generalSettingsPanel.add(renderTimeSpinner, new GridBagConstraints(
             1, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
-            GridBagConstraints.HORIZONTAL, insets, 0, 0));
-        generalSettingsPanel.add(nightRenderCheckbox, new GridBagConstraints(
-            2, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
-            GridBagConstraints.HORIZONTAL, insets, 0, 0));
-        generalSettingsPanel.add(nightRenderTimeSpinner, new GridBagConstraints(
-            3, generalSettingsPanelGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
         generalSettingsPanelGridYIndex++;
 
@@ -879,16 +828,8 @@ public class Panel extends JPanel implements DialogView {
             0, currentGridYIndex, 4, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
 
-        updatePanelVisibility();
-
         javax.swing.JSplitPane splitPane = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, mainPanel, previewScrollPane);
         add(splitPane, java.awt.BorderLayout.CENTER);
-    }
-
-    private void updatePanelVisibility() {
-        boolean nightRenderEnabled = nightRenderCheckbox.isSelected();
-        renderImagesPanel.setVisible(nightRenderEnabled);
-        baseImagesPanel.setVisible(nightRenderEnabled);
     }
 
     public void displayView(View parentView) {

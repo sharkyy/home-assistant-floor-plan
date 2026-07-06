@@ -121,6 +121,7 @@ public class Controller {
     private Renderer renderer;
     private Quality quality;
     private ImageFormat imageFormat;
+    private long renderTime;
     private List<Long> renderDateTimes;
     private String outputDirectoryName;
     private String outputRendersDirectoryName;
@@ -163,7 +164,13 @@ public class Controller {
         renderer = Renderer.valueOf(settings.get(CONTROLLER_RENDERER, Renderer.YAFARAY.name()));
         quality = Quality.valueOf(settings.get(CONTROLLER_QUALITY, Quality.HIGH.name()));
         imageFormat = ImageFormat.valueOf(settings.get(CONTROLLER_IMAGE_FORMAT, ImageFormat.PNG.name()));
-        renderDateTimes = settings.getListLong(CONTROLLER_RENDER_TIME, Arrays.asList(camera.getTime()));
+        // A single configured time (the night/display moment). The brightest
+        // daytime moment for base_day is derived from it automatically. Reading
+        // it as a list keeps backward compatibility with the previous two-time
+        // format; the last entry was the night time.
+        List<Long> savedRenderTimes = settings.getListLong(CONTROLLER_RENDER_TIME, Arrays.asList(camera.getTime()));
+        renderTime = savedRenderTimes.get(savedRenderTimes.size() - 1);
+        updateRenderDateTimes();
         outputDirectoryName = settings.get(CONTROLLER_OUTPUT_DIRECTORY_NAME, System.getProperty("user.home"));
         outputRendersDirectoryName = outputDirectoryName + File.separator + "renders";
         outputFloorplanDirectoryName = outputDirectoryName + File.separator + "floorplan";
@@ -223,14 +230,12 @@ public class Controller {
         // Count light combination renders
         int numberOfLightRenders = 1; // for base_day
         for (List<Entity> groupLights : lightsGroups.values()) {
-            numberOfLightRenders += (1 << getNumberOfControllableLights(groupLights)) - 1;
+            numberOfLightRenders += getNumberOfControllableLights(groupLights);
         }
         totalRenders += numberOfLightRenders;
 
-        // Count night base image
-        if (renderDateTimes.size() > 1) {
-            totalRenders++;
-        }
+        // Count night base image (always rendered alongside base_day)
+        totalRenders++;
 
         if (generateFloorplanYaml) {
             totalRenders++;
@@ -346,10 +351,34 @@ public class Controller {
         return renderDateTimes;
     }
 
-    public void setRenderDateTimes(List<Long> renderDateTimes) {
-        this.renderDateTimes = renderDateTimes;
-        settings.setListLong(CONTROLLER_RENDER_TIME, renderDateTimes);
+    public long getRenderTime() {
+        return renderTime;
+    }
+
+    public void setRenderTime(long renderTime) {
+        this.renderTime = renderTime;
+        settings.setListLong(CONTROLLER_RENDER_TIME, Arrays.asList(renderTime));
+        updateRenderDateTimes();
         buildScenes();
+    }
+
+    // The day/night pair the rest of the pipeline renders from: base_day at the
+    // brightest moment of the configured day (so it is never dark even when the
+    // configured time is at night), base_night and every light render at the
+    // configured (night/display) time. Always two entries so the day/night
+    // switching conditions in the generated YAML keep working.
+    private void updateRenderDateTimes() {
+        renderDateTimes = Arrays.asList(dayTimeFor(renderTime), renderTime);
+    }
+
+    private long dayTimeFor(long nightTime) {
+        long oneDay = 24L * 60 * 60 * 1000;
+        long startOfDay = (nightTime / oneDay) * oneDay;
+        long brightest = brightestTimeOfDay(startOfDay);
+        if (brightest != startOfDay)
+            return brightest;
+        // No compass to locate solar noon - fall back to midday of that day.
+        return startOfDay + oneDay / 2;
     }
 
     public int getCeilingLightsIntensity() {
@@ -438,12 +467,12 @@ public class Controller {
                 } else {
                     home.getEnvironment().setSkyColor(AutoCrop.CROP_COLOR.getRGB());
                     home.getEnvironment().setGroundColor(AutoCrop.CROP_COLOR.getRGB());
-                    // Render the stamp at the brightest moment of the render day so
+                    // Render the stamp at the bright daytime moment (renderDateTimes
+                    // index 0 is already the brightest time of the configured day) so
                     // the green chroma key stays as bright as possible, regardless of
-                    // the (possibly night-time) render times the user configured. The
-                    // stamp is only used for its silhouette, so the exact time is
-                    // irrelevant - it just needs the key to be easy to detect.
-                    camera.setTime(brightestTimeOfDay(renderDateTimes.get(0)));
+                    // the night-time render moment. The stamp is only used for its
+                    // silhouette, so the exact time just needs the key easy to detect.
+                    camera.setTime(renderDateTimes.get(0));
                     BufferedImage tempBaseImage = renderScene();
                     stencilMask = createFloorplanStamp(tempBaseImage);
                     home.getEnvironment().setSkyColor(originalSkyColor);
@@ -471,12 +500,10 @@ public class Controller {
             // Render the dimmed night ambiance before the per-room light
             // combinations so those combinations are layered on top of it with
             // the lighten blend mode instead of being hidden behind it.
-            if (renderDateTimes.size() > 1) {
-                camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
-                processImage("base_night", null, null, stencilMask);
-                if (generateFloorplanYaml) {
-                    yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night", false);
-                }
+            camera.setTime(renderDateTimes.get(renderDateTimes.size() - 1));
+            processImage("base_night", null, null, stencilMask);
+            if (generateFloorplanYaml) {
+                yaml += generateLightYaml(new Scene(camera, renderDateTimes, renderDateTimes.get(renderDateTimes.size() - 1), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()), Collections.emptyList(), null, "base_night", false);
             }
 
             for (String group : lightsGroups.keySet()) {
@@ -1135,12 +1162,14 @@ public class Controller {
 
     private String generateLightYaml(Scene scene, List<Entity> lights, List<Entity> onLights, String imageName, boolean includeMixBlend) throws IOException {
         String conditions = "";
-        for (Entity light : lights) {
-            conditions += String.format(
-                "      - condition: state\n" +
-                "        entity: %s\n" +
-                "        state: '%s'\n",
-                light.getName(), onLights.contains(light) ? "on" : "off");
+        if (onLights != null) {
+            for (Entity light : onLights) {
+                conditions += String.format(
+                    "      - condition: state\n" +
+                    "        entity: %s\n" +
+                    "        state: 'on'\n",
+                    light.getName());
+            }
         }
         conditions += scene.getConditions();
         if (conditions.length() == 0)
@@ -1233,22 +1262,10 @@ public class Controller {
     public List<List<Entity>> getCombinations(List<Entity> inputSet) {
         List<List<Entity>> combinations = new ArrayList<>();
         List<Entity> inputList = new ArrayList<>(inputSet);
-
         removeAlwaysOnLights(inputList);
-        _getCombinations(inputList, 0, new ArrayList<Entity>(), combinations);
-
+        for (Entity entity : inputList)
+            combinations.add(Arrays.asList(entity));
         return combinations;
-    }
-
-    private void _getCombinations(List<Entity> inputList, int currentIndex, List<Entity> currentCombination, List<List<Entity>> combinations) {
-        if (currentCombination.size() > 0)
-            combinations.add(new ArrayList<>(currentCombination));
-
-        for (int i = currentIndex; i < inputList.size(); i++) {
-            currentCombination.add(inputList.get(i));
-            _getCombinations(inputList, i + 1, currentCombination, combinations);
-            currentCombination.remove(currentCombination.size() - 1);
-        }
     }
 
     private Point2d getFurniture2dLocation(HomePieceOfFurniture piece) {
