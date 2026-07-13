@@ -30,6 +30,7 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -102,6 +103,7 @@ public class Controller {
     private static final String CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY = "renderCeilingLightsIntensity";
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
     private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
+    private static final String CONTROLLER_CREATE_ROOM_TOP_SELECTORS = "createRoomTopSelectors";
     private static final String CONTROLLER_STAMP_SMOOTHING = "stampSmoothing";
 
     private Home home;
@@ -136,6 +138,7 @@ public class Controller {
     private int renderCeilingLightsIntensity;
     private int renderOtherLightsIntensity;
     private boolean createRoomSelectors;
+    private boolean createRoomTopSelectors;
     private int stampSmoothing;
     private Rectangle cropArea = null;
     // Cropped (and optionally blurred) stamp coverage, computed once per render
@@ -184,6 +187,7 @@ public class Controller {
         renderCeilingLightsIntensity = settings.getInteger(CONTROLLER_RENDER_CEILING_LIGHTS_INTENSITY, 20);
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
         createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
+        createRoomTopSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_TOP_SELECTORS, false);
         stampSmoothing = settings.getInteger(CONTROLLER_STAMP_SMOOTHING, 0);
     }
 
@@ -426,6 +430,15 @@ public class Controller {
         settings.setBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, createRoomSelectors);
     }
 
+    public boolean getCreateRoomTopSelectors() {
+        return createRoomTopSelectors;
+    }
+
+    public void setCreateRoomTopSelectors(boolean createRoomTopSelectors) {
+        this.createRoomTopSelectors = createRoomTopSelectors;
+        settings.setBoolean(CONTROLLER_CREATE_ROOM_TOP_SELECTORS, createRoomTopSelectors);
+    }
+
     public int getStampSmoothing() {
         return stampSmoothing;
     }
@@ -536,6 +549,10 @@ public class Controller {
 
             if (createRoomSelectors) {
                 generateRoomSelectorImages(stencilMask);
+            }
+
+            if (createRoomTopSelectors) {
+                generateRoomTopSelectorImages(stencilMask);
             }
         } catch (InterruptedIOException | ClosedByInterruptException e) {
             throw new InterruptedException();
@@ -1522,10 +1539,26 @@ public class Controller {
     }
 
     private void generateRoomSelectorImages(BufferedImage stencilMask) throws IOException {
-        String outputSelectedDirectoryName = outputDirectoryName + File.separator + "floorplan_selected";
+        // Floor outline: traced at the room's floor elevation.
+        generateRoomOutlineImages(stencilMask, "floorplan_selected",
+            room -> room.getLevel() != null ? room.getLevel().getElevation() : 0f,
+            "Generating room selectors...", "Finished generating room selectors.");
+    }
+
+    private void generateRoomTopSelectorImages(BufferedImage stencilMask) throws IOException {
+        // Ceiling outline: traced at the wall-to-ceiling boundary, i.e. the
+        // floor elevation plus the level's wall height.
+        generateRoomOutlineImages(stencilMask, "room_selected",
+            room -> room.getLevel() != null ? room.getLevel().getElevation() + room.getLevel().getHeight() : 0f,
+            "Generating room top selectors...", "Finished generating room top selectors.");
+    }
+
+    private void generateRoomOutlineImages(BufferedImage stencilMask, String outputSelectedDirectoryLeafName,
+            Function<Room, Float> roomOutlineElevation, String startStatusText, String finishStatusText) throws IOException {
+        String outputSelectedDirectoryName = outputDirectoryName + File.separator + outputSelectedDirectoryLeafName;
         Files.createDirectories(Paths.get(outputSelectedDirectoryName));
 
-        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Generating room selectors..."));
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, startStatusText));
 
         for (Room room : home.getRooms()) {
             if (!home.getEnvironment().isAllLevelsVisible() && room.getLevel() != home.getSelectedLevel())
@@ -1539,7 +1572,7 @@ public class Controller {
             g2d.setStroke(new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0, new float[]{9}, 0));
 
             Polygon polygon = new Polygon();
-            float elevation = room.getLevel() != null ? room.getLevel().getElevation() : 0;
+            float elevation = roomOutlineElevation.apply(room);
             for (float[] point : room.getPoints()) {
                 Point2d p = getRoom2dLocation(point[0], point[1], elevation);
                 polygon.addPoint((int) p.x, (int) p.y);
@@ -1555,6 +1588,6 @@ public class Controller {
             ImageIO.write(processedImage, "png", roomFile);
         }
 
-        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selectors."));
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, finishStatusText));
     }
 };

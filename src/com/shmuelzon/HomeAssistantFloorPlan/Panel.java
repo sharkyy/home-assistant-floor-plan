@@ -114,6 +114,7 @@ public class Panel extends JPanel implements DialogView {
     private JCheckBox maintainAspectRatioCheckbox;
     private JCheckBox generateFloorplanYamlCheckbox;
     private JCheckBox createRoomSelectorsCheckbox;
+    private JCheckBox createRoomTopSelectorsCheckbox;
     private JLabel transparencyThresholdLabel;
     private JSpinner transparencyThresholdSpinner;
     private JLabel stampSmoothingLabel;
@@ -516,6 +517,16 @@ public class Panel extends JPanel implements DialogView {
             }
         });
 
+        createRoomTopSelectorsCheckbox = new JCheckBox();
+        createRoomTopSelectorsCheckbox.setText(resource.getString("HomeAssistantFloorPlan.Panel.createRoomTopSelectors.text"));
+        createRoomTopSelectorsCheckbox.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.createRoomTopSelectors.tooltip"));
+        createRoomTopSelectorsCheckbox.setSelected(controller.getCreateRoomTopSelectors());
+        createRoomTopSelectorsCheckbox.addItemListener(new ItemListener() {
+            public void itemStateChanged(ItemEvent ev) {
+                controller.setCreateRoomTopSelectors(createRoomTopSelectorsCheckbox.isSelected());
+            }
+        });
+
         transparencyThresholdLabel = new JLabel();
         transparencyThresholdLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.transparencyThresholdLabel.text"));
         final SpinnerNumberModel transparencyThresholdSpinnerModel = new SpinnerNumberModel(30, 0, 255, 1);
@@ -635,6 +646,7 @@ public class Panel extends JPanel implements DialogView {
         maintainAspectRatioCheckbox.setEnabled(enabled);
         generateFloorplanYamlCheckbox.setEnabled(enabled);
         createRoomSelectorsCheckbox.setEnabled(enabled);
+        createRoomTopSelectorsCheckbox.setEnabled(enabled);
         if (enabled) {
             startButton.setAction(getActionMap().get(ActionType.START));
             startButton.setText(resource.getString("HomeAssistantFloorPlan.Panel.startButton.text"));
@@ -820,6 +832,9 @@ public class Panel extends JPanel implements DialogView {
 
         mainPanel.add(createRoomSelectorsCheckbox, new GridBagConstraints(
             0, currentGridYIndex, 2, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(createRoomTopSelectorsCheckbox, new GridBagConstraints(
+            2, currentGridYIndex, 2, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
         currentGridYIndex++;
 
