@@ -93,7 +93,11 @@ the room they're located in. Please verify the list matches your expectations.
   enabled; `0` keeps a hard edge, higher values blend the floor plan outline
   more smoothly
 * Renderer - Select which rendering engine to use, YafaRay or SunFlow
-* Image format - The image file format of the resulting floor plan (PNG or JPEG)
+* Image format - The image file format of the resulting (cropped) floor plan
+  images: PNG, lossless WebP or JPEG. PNG and lossless WebP are both pixel
+  exact and keep the transparency the light overlays rely on, with WebP
+  producing noticeably smaller files; JPEG has no transparency at all and
+  flattens it onto black
 * Quality - Choose the rendering quality (low or high)
 * Output directory - The location on your PC where the floor plan images and
   YAML will be saved

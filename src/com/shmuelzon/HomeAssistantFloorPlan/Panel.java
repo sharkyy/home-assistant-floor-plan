@@ -457,7 +457,9 @@ public class Panel extends JPanel implements DialogView {
 
         imageFormatLabel = new JLabel();
         imageFormatLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.imageFormatLabel.text"));
+        imageFormatLabel.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.imageFormatLabel.tooltip"));
         imageFormatComboBox = new JComboBox<Controller.ImageFormat>(Controller.ImageFormat.values());
+        imageFormatComboBox.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.imageFormatLabel.tooltip"));
         imageFormatComboBox.setSelectedItem(controller.getImageFormat());
         imageFormatComboBox.setRenderer(new DefaultListCellRenderer() {
             public Component getListCellRendererComponent(JList<?> jList, Object o, int i, boolean b, boolean b1) {

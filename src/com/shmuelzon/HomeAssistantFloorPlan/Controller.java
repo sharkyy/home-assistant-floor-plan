@@ -75,7 +75,7 @@ public class Controller {
     public enum Property {PROGRESS_UPDATE, NUMBER_OF_RENDERS, PREVIEW_UPDATE}
     public enum Renderer {YAFARAY, SUNFLOW}
     public enum Quality {HIGH, LOW}
-    public enum ImageFormat {PNG, JPEG}
+    public enum ImageFormat {PNG, JPEG, WEBP_LOSSLESS}
     public enum AiModel {
         NANO_BANANA("gemini-2.5-flash-image"),
         NANO_BANANA_2("gemini-3.1-flash-image"),
@@ -571,11 +571,11 @@ public class Controller {
                 propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Stamp processed."));
             }
 
-            generateTransparentImage(outputFloorplanDirectoryName + File.separator + TRANSPARENT_IMAGE_NAME + ".png");
+            generateTransparentImage(outputFloorplanDirectoryName + File.separator + TRANSPARENT_IMAGE_NAME + "." + getFloorplanImageExtention());
             String yaml = String.format(
                 "type: picture-elements\n" +
-                "image: /local/floorplan/%s.png?version=%s\n" +
-                "elements:\n", TRANSPARENT_IMAGE_NAME, renderHash(TRANSPARENT_IMAGE_NAME, true));
+                "image: /local/floorplan/%s.%s?version=%s\n" +
+                "elements:\n", TRANSPARENT_IMAGE_NAME, getFloorplanImageExtention(), renderHash(TRANSPARENT_IMAGE_NAME));
 
             turnOffLightsFromOtherLevels();
 
@@ -1025,14 +1025,37 @@ public class Controller {
     }
 
     private String getFloorplanImageExtention() {
-        return this.imageFormat.name().toLowerCase();
+        return this.imageFormat == ImageFormat.WEBP_LOSSLESS ? "webp" : this.imageFormat.name().toLowerCase();
+    }
+
+    // Writes one of the generated (cropped) images in the configured output
+    // format. WebP goes through the bundled lossless encoder because ImageIO
+    // has no WebP writer, and JPEG has no alpha channel at all, so transparent
+    // pixels are flattened onto black - the neutral colour for the "lighten"
+    // blend mode the generated YAML uses to stack the light overlays.
+    private void writeOutputImage(BufferedImage image, File file) throws IOException {
+        if (imageFormat == ImageFormat.WEBP_LOSSLESS)
+            WebPWriter.write(image, file);
+        else if (imageFormat == ImageFormat.JPEG)
+            ImageIO.write(flattenTransparency(image), "jpeg", file);
+        else
+            ImageIO.write(image, "png", file);
+    }
+
+    private BufferedImage flattenTransparency(BufferedImage image) {
+        BufferedImage opaqueImage = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2d = opaqueImage.createGraphics();
+        g2d.setColor(Color.BLACK);
+        g2d.fillRect(0, 0, image.getWidth(), image.getHeight());
+        g2d.drawImage(image, 0, 0, null);
+        g2d.dispose();
+        return opaqueImage;
     }
 
     private void generateTransparentImage(String fileName) throws IOException {
         BufferedImage image = new BufferedImage(renderWidth, renderHeight, BufferedImage.TYPE_INT_ARGB);
         image.setRGB(0, 0, 0);
-        File imageFile = new File(fileName);
-        ImageIO.write(image, "png", imageFile);
+        writeOutputImage(image, new File(fileName));
     }
 
     private BufferedImage postProcessImage(BufferedImage image, BufferedImage stencilMask) {
@@ -1059,7 +1082,7 @@ public class Controller {
     private BufferedImage processAndSaveFinalImage(BufferedImage image, BufferedImage stencilMask, String imageName) throws IOException {
         BufferedImage processedImage = postProcessImage(image, stencilMask);
 
-        saveFloorPlanImage(processedImage, imageName, "png");
+        saveFloorPlanImage(processedImage, imageName);
         propertyChangeSupport.firePropertyChange(Property.PREVIEW_UPDATE.name(), null, processedImage);
         return processedImage;
     }
@@ -1209,9 +1232,8 @@ public class Controller {
         return overlay;
     }
 
-    private void saveFloorPlanImage(BufferedImage image, String name, String extension) throws IOException {
-        File floorPlanFile = new File(outputFloorplanDirectoryName + File.separator + name + "." + extension);
-        ImageIO.write(image, extension, floorPlanFile);
+    private void saveFloorPlanImage(BufferedImage image, String name) throws IOException {
+        writeOutputImage(image, new File(outputFloorplanDirectoryName + File.separator + name + "." + getFloorplanImageExtention()));
     }
 
     private BufferedImage generateRedTintedImage(BufferedImage image, String imageName, BufferedImage stencilMask) throws IOException {
@@ -1230,7 +1252,7 @@ public class Controller {
         }
 
         BufferedImage processedTintedImage = postProcessImage(tintedImage, stencilMask);
-        saveFloorPlanImage(processedTintedImage, imageName + ".red", "png");
+        saveFloorPlanImage(processedTintedImage, imageName + ".red");
         return processedTintedImage;
     }
 
@@ -1246,12 +1268,7 @@ public class Controller {
     }
 
     private String renderHash(String imageName) throws IOException {
-        return renderHash(imageName, false);
-    }
-
-    private String renderHash(String imageName, boolean forcePng) throws IOException {
-        String imageExtension = forcePng ? "png" : getFloorplanImageExtention();
-        byte[] content = Files.readAllBytes(Paths.get(outputFloorplanDirectoryName + File.separator + imageName + "." + imageExtension));
+        byte[] content = Files.readAllBytes(Paths.get(outputFloorplanDirectoryName + File.separator + imageName + "." + getFloorplanImageExtention()));
         try {
             byte[] hash = MessageDigest.getInstance("MD5").digest(content);
             return bytesToHex(hash);
@@ -1331,8 +1348,8 @@ public class Controller {
             "          type: image\n" +
             "          image: >-\n" +
             "              ${!isInColoredMode(COLOR_MODE) || (isInColoredMode(COLOR_MODE) && LIGHT_COLOR && LIGHT_COLOR[0] == 0 && LIGHT_COLOR[1] == 0) ?\n" +
-            "              '/local/floorplan/%s.png?version=%s' :\n" +
-            "              '/local/floorplan/%s.png?version=%s' }\n" +
+            "              '/local/floorplan/%s.%s?version=%s' :\n" +
+            "              '/local/floorplan/%s.%s?version=%s' }\n" +
             "        style:\n" +
             "          filter: '${ \"hue-rotate(\" + (isInColoredMode(COLOR_MODE) && LIGHT_COLOR ? LIGHT_COLOR[0] : 0) + \"deg) saturate(\" + (LIGHT_COLOR ? LIGHT_COLOR[1] / 100 : 1) + \")\"}'\n" +
             "          opacity: '${LIGHT_STATE === ''on'' ? (BRIGHTNESS / 255) : ''100''}'\n" +
@@ -1343,7 +1360,8 @@ public class Controller {
             "          width: 100%%\n",
             generateTitle(scene, Arrays.asList(light)),
             lightName, scene.getConditions(), lightName, lightName, lightName, lightName, lightName,
-            normalizePath(imageName), renderHash(imageName, true), normalizePath(imageName) + ".red", renderHash(imageName + ".red", true));
+            normalizePath(imageName), getFloorplanImageExtention(), renderHash(imageName),
+            normalizePath(imageName) + ".red", getFloorplanImageExtention(), renderHash(imageName + ".red"));
     }
 
     private String normalizePath(String fileName) {
@@ -1514,22 +1532,34 @@ public class Controller {
         return light.getName().toLowerCase().contains(CEILING_LIGHT_NAME_KEYWORD);
     }
 
+    // Returns the previously generated image for this render, or null when
+    // nothing reusable is on disk. Only the raw renders are guaranteed to be
+    // readable: the finished floor plan is written in the configured output
+    // format, and ImageIO can read back neither WebP nor a JPEG's lost
+    // transparency, in which case the render is simply repeated.
+    private BufferedImage readExistingRender(String imageName, File rawRenderFile, File finalImageFile) throws IOException {
+        // When AI rendering is active, downstream processing worked on the
+        // AI-enhanced image, so return that one to keep overlays consistent.
+        File aiRenderFile = aiRenderFile(imageName);
+        if (isAiRenderingActive() && aiRenderFile.exists())
+            return ImageIO.read(aiRenderFile);
+        if (rawRenderFile.exists())
+            return ImageIO.read(rawRenderFile);
+        if (imageFormat == ImageFormat.PNG)
+            return ImageIO.read(finalImageFile);
+        return null;
+    }
+
     private BufferedImage processImage(String imageName, List<Entity> onLights, BufferedImage baseImage, BufferedImage stencilMask) throws IOException, InterruptedException {
         File finalImageFile = new File(outputFloorplanDirectoryName + File.separator + imageName + "." + getFloorplanImageExtention());
         File rawRenderFile = new File(outputRendersDirectoryName + File.separator + imageName + ".png");
 
         if (useExistingRenders && finalImageFile.exists()) {
-            propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Skipping " + imageName + "..."));
-            // When AI rendering is active, downstream processing worked on the
-            // AI-enhanced image, so return that one to keep overlays consistent.
-            File aiRenderFile = aiRenderFile(imageName);
-            if (isAiRenderingActive() && aiRenderFile.exists()) {
-                return ImageIO.read(aiRenderFile);
+            BufferedImage existingImage = readExistingRender(imageName, rawRenderFile, finalImageFile);
+            if (existingImage != null) {
+                propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Skipping " + imageName + "..."));
+                return existingImage;
             }
-            if (rawRenderFile.exists()) {
-                return ImageIO.read(rawRenderFile);
-            }
-            return ImageIO.read(finalImageFile);
         }
 
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Rendering " + imageName + "..."));
@@ -1701,8 +1731,8 @@ public class Controller {
             BufferedImage processedImage = postProcessRoomSelectorImage(roomImage, stencilMask);
 
             String roomName = room.getName() != null && !room.getName().trim().isEmpty() ? room.getName() : room.getId();
-            File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + ".png");
-            ImageIO.write(processedImage, "png", roomFile);
+            File roomFile = new File(outputSelectedDirectoryName + File.separator + roomName.toLowerCase() + "." + getFloorplanImageExtention());
+            writeOutputImage(processedImage, roomFile);
         }
 
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished generating room selectors."));
