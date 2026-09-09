@@ -43,6 +43,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JTree;
 import javax.swing.SpinnerDateModel;
@@ -114,6 +115,15 @@ public class Panel extends JPanel implements DialogView {
     private JCheckBox maintainAspectRatioCheckbox;
     private JCheckBox generateFloorplanYamlCheckbox;
     private JCheckBox createRoomSelectorsCheckbox;
+    private JCheckBox aiRenderingCheckbox;
+    private JLabel aiApiKeyLabel;
+    private JTextField aiApiKeyTextField;
+    private JLabel aiModelLabel;
+    private JComboBox<Controller.AiModel> aiModelComboBox;
+    private JLabel aiPromptLabel;
+    private JTextArea aiPromptTextArea;
+    private JScrollPane aiPromptScrollPane;
+    private JButton aiPromptResetButton;
     private JLabel transparencyThresholdLabel;
     private JSpinner transparencyThresholdSpinner;
     private JLabel stampSmoothingLabel;
@@ -516,6 +526,69 @@ public class Panel extends JPanel implements DialogView {
             }
         });
 
+        aiRenderingCheckbox = new JCheckBox();
+        aiRenderingCheckbox.setText(resource.getString("HomeAssistantFloorPlan.Panel.aiRendering.text"));
+        aiRenderingCheckbox.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.aiRendering.tooltip"));
+        aiRenderingCheckbox.setSelected(controller.getAiRendering());
+        aiRenderingCheckbox.addItemListener(new ItemListener() {
+            public void itemStateChanged(ItemEvent ev) {
+                controller.setAiRendering(aiRenderingCheckbox.isSelected());
+                showHideAiOptions();
+            }
+        });
+
+        aiApiKeyLabel = new JLabel();
+        aiApiKeyLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.aiApiKeyLabel.text"));
+        aiApiKeyLabel.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.aiApiKeyLabel.tooltip"));
+        aiApiKeyTextField = new JTextField(20);
+        aiApiKeyTextField.setText(controller.getAiApiKey());
+        aiApiKeyTextField.getDocument().addDocumentListener(new SimpleDocumentListener() {
+            @Override
+            public void executeUpdate(DocumentEvent e) {
+                controller.setAiApiKey(aiApiKeyTextField.getText());
+            }
+        });
+
+        aiModelLabel = new JLabel();
+        aiModelLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.aiModelLabel.text"));
+        aiModelLabel.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.aiModelLabel.tooltip"));
+        aiModelComboBox = new JComboBox<Controller.AiModel>(Controller.AiModel.values());
+        aiModelComboBox.setSelectedItem(controller.getAiModel());
+        aiModelComboBox.setRenderer(new DefaultListCellRenderer() {
+            public Component getListCellRendererComponent(JList<?> jList, Object o, int i, boolean b, boolean b1) {
+                Component rendererComponent = super.getListCellRendererComponent(jList, o, i, b, b1);
+                setText(resource.getString(String.format("HomeAssistantFloorPlan.Panel.aiModelComboBox.%s.text", ((Controller.AiModel)o).name())));
+                return rendererComponent;
+            }
+        });
+        aiModelComboBox.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ev) {
+                controller.setAiModel((Controller.AiModel)aiModelComboBox.getSelectedItem());
+            }
+        });
+
+        aiPromptLabel = new JLabel();
+        aiPromptLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.aiPromptLabel.text"));
+        aiPromptLabel.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.aiPromptLabel.tooltip"));
+        aiPromptTextArea = new JTextArea(controller.getAiPrompt(), 5, 20);
+        aiPromptTextArea.setLineWrap(true);
+        aiPromptTextArea.setWrapStyleWord(true);
+        aiPromptTextArea.getDocument().addDocumentListener(new SimpleDocumentListener() {
+            @Override
+            public void executeUpdate(DocumentEvent e) {
+                controller.setAiPrompt(aiPromptTextArea.getText());
+            }
+        });
+        aiPromptScrollPane = new JScrollPane(aiPromptTextArea);
+        aiPromptResetButton = new JButton();
+        aiPromptResetButton.setText(resource.getString("HomeAssistantFloorPlan.Panel.aiPromptResetButton.text"));
+        aiPromptResetButton.setToolTipText(resource.getString("HomeAssistantFloorPlan.Panel.aiPromptResetButton.tooltip"));
+        aiPromptResetButton.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent ev) {
+                aiPromptTextArea.setText(controller.getDefaultAiPrompt());
+            }
+        });
+
         transparencyThresholdLabel = new JLabel();
         transparencyThresholdLabel.setText(resource.getString("HomeAssistantFloorPlan.Panel.transparencyThresholdLabel.text"));
         final SpinnerNumberModel transparencyThresholdSpinnerModel = new SpinnerNumberModel(30, 0, 255, 1);
@@ -635,6 +708,11 @@ public class Panel extends JPanel implements DialogView {
         maintainAspectRatioCheckbox.setEnabled(enabled);
         generateFloorplanYamlCheckbox.setEnabled(enabled);
         createRoomSelectorsCheckbox.setEnabled(enabled);
+        aiRenderingCheckbox.setEnabled(enabled);
+        aiApiKeyTextField.setEnabled(enabled);
+        aiModelComboBox.setEnabled(enabled);
+        aiPromptTextArea.setEnabled(enabled);
+        aiPromptResetButton.setEnabled(enabled);
         if (enabled) {
             startButton.setAction(getActionMap().get(ActionType.START));
             startButton.setText(resource.getString("HomeAssistantFloorPlan.Panel.startButton.text"));
@@ -643,6 +721,17 @@ public class Panel extends JPanel implements DialogView {
             startButton.setText(resource.getString("HomeAssistantFloorPlan.Panel.stopButton.text"));
         }
         showHidePostProcessingOptions();
+    }
+
+    private void showHideAiOptions() {
+        boolean aiRenderingEnabled = aiRenderingCheckbox.isSelected();
+        aiApiKeyLabel.setVisible(aiRenderingEnabled);
+        aiApiKeyTextField.setVisible(aiRenderingEnabled);
+        aiModelLabel.setVisible(aiRenderingEnabled);
+        aiModelComboBox.setVisible(aiRenderingEnabled);
+        aiPromptLabel.setVisible(aiRenderingEnabled);
+        aiPromptScrollPane.setVisible(aiRenderingEnabled);
+        aiPromptResetButton.setVisible(aiRenderingEnabled);
     }
 
     private void showHidePostProcessingOptions() {
@@ -821,7 +910,38 @@ public class Panel extends JPanel implements DialogView {
         mainPanel.add(createRoomSelectorsCheckbox, new GridBagConstraints(
             0, currentGridYIndex, 2, 1, 0, 0, GridBagConstraints.CENTER,
             GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(aiRenderingCheckbox, new GridBagConstraints(
+            2, currentGridYIndex, 2, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
         currentGridYIndex++;
+
+        /* AI rendering options */
+        mainPanel.add(aiApiKeyLabel, new GridBagConstraints(
+            0, currentGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(aiApiKeyTextField, new GridBagConstraints(
+            1, currentGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(aiModelLabel, new GridBagConstraints(
+            2, currentGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(aiModelComboBox, new GridBagConstraints(
+            3, currentGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        currentGridYIndex++;
+
+        mainPanel.add(aiPromptLabel, new GridBagConstraints(
+            0, currentGridYIndex, 3, 1, 0, 0, GridBagConstraints.LINE_START,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        mainPanel.add(aiPromptResetButton, new GridBagConstraints(
+            3, currentGridYIndex, 1, 1, 0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        currentGridYIndex++;
+        mainPanel.add(aiPromptScrollPane, new GridBagConstraints(
+            0, currentGridYIndex, 4, 1, 1.0, 0, GridBagConstraints.CENTER,
+            GridBagConstraints.HORIZONTAL, insets, 0, 0));
+        currentGridYIndex++;
+        showHideAiOptions();
 
         /* Progress bar */
         mainPanel.add(progressBar, new GridBagConstraints(

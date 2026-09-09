@@ -12,6 +12,7 @@ import java.beans.PropertyChangeSupport;
 import java.awt.Rectangle;
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.io.InterruptedIOException;
 import java.lang.InterruptedException;
 import java.nio.channels.ClosedByInterruptException;
@@ -41,12 +42,15 @@ import javax.vecmath.Vector4d;
 
 import com.eteks.sweethome3d.j3d.AbstractPhotoRenderer;
 import com.eteks.sweethome3d.model.Camera;
+import com.eteks.sweethome3d.model.CatalogTexture;
 import com.eteks.sweethome3d.model.Compass;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeFurnitureGroup;
 import com.eteks.sweethome3d.model.HomeLight;
 import com.eteks.sweethome3d.model.HomePieceOfFurniture;
+import com.eteks.sweethome3d.model.HomeTexture;
 import com.eteks.sweethome3d.model.Room;
+import com.eteks.sweethome3d.tools.URLContent;
 
 
 public class Controller {
@@ -72,6 +76,21 @@ public class Controller {
     public enum Renderer {YAFARAY, SUNFLOW}
     public enum Quality {HIGH, LOW}
     public enum ImageFormat {PNG, JPEG}
+    public enum AiModel {
+        NANO_BANANA("gemini-2.5-flash-image"),
+        NANO_BANANA_2("gemini-3.1-flash-image"),
+        NANO_BANANA_2_LITE("gemini-3.1-flash-lite-image");
+
+        private final String modelId;
+
+        AiModel(String modelId) {
+            this.modelId = modelId;
+        }
+
+        public String getModelId() {
+            return modelId;
+        }
+    }
 
     private static final String TRANSPARENT_IMAGE_NAME = "transparent";
     private static final String CEILING_LIGHT_NAME_KEYWORD = "deckenlampe";
@@ -103,6 +122,10 @@ public class Controller {
     private static final String CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY = "renderOtherLightsIntensity";
     private static final String CONTROLLER_CREATE_ROOM_SELECTORS = "createRoomSelectors";
     private static final String CONTROLLER_STAMP_SMOOTHING = "stampSmoothing";
+    private static final String CONTROLLER_AI_RENDERING = "aiRendering";
+    private static final String CONTROLLER_AI_API_KEY = "aiApiKey";
+    private static final String CONTROLLER_AI_MODEL = "aiModel";
+    private static final String CONTROLLER_AI_PROMPT = "aiPrompt";
 
     private Home home;
     private Settings settings;
@@ -137,6 +160,14 @@ public class Controller {
     private int renderOtherLightsIntensity;
     private boolean createRoomSelectors;
     private int stampSmoothing;
+    private boolean aiRendering;
+    private String aiApiKey;
+    private AiModel aiModel;
+    private String aiPrompt;
+    // The first AI-enhanced image of a run (base_day) is reused as a style
+    // reference for every later AI enhancement so the decoration the model
+    // invents stays identical across day/night/light renders.
+    private BufferedImage aiReferenceImage;
     private Rectangle cropArea = null;
     // Cropped (and optionally blurred) stamp coverage, computed once per render
     // and reused for every processed image since it never changes within a run.
@@ -185,6 +216,10 @@ public class Controller {
         renderOtherLightsIntensity = settings.getInteger(CONTROLLER_RENDER_OTHER_LIGHTS_INTENSITY, 10);
         createRoomSelectors = settings.getBoolean(CONTROLLER_CREATE_ROOM_SELECTORS, false);
         stampSmoothing = settings.getInteger(CONTROLLER_STAMP_SMOOTHING, 0);
+        aiRendering = settings.getBoolean(CONTROLLER_AI_RENDERING, false);
+        aiApiKey = settings.get(CONTROLLER_AI_API_KEY, "");
+        aiModel = AiModel.valueOf(settings.get(CONTROLLER_AI_MODEL, AiModel.NANO_BANANA_2.name()));
+        aiPrompt = settings.get(CONTROLLER_AI_PROMPT, AiImageRenderer.DEFAULT_PROMPT);
     }
 
     public void addPropertyChangeListener(Property property, PropertyChangeListener listener) {
@@ -435,6 +470,46 @@ public class Controller {
         settings.setInteger(CONTROLLER_STAMP_SMOOTHING, stampSmoothing);
     }
 
+    public boolean getAiRendering() {
+        return aiRendering;
+    }
+
+    public void setAiRendering(boolean aiRendering) {
+        this.aiRendering = aiRendering;
+        settings.setBoolean(CONTROLLER_AI_RENDERING, aiRendering);
+    }
+
+    public String getAiApiKey() {
+        return aiApiKey;
+    }
+
+    public void setAiApiKey(String aiApiKey) {
+        this.aiApiKey = aiApiKey;
+        settings.set(CONTROLLER_AI_API_KEY, aiApiKey);
+    }
+
+    public AiModel getAiModel() {
+        return aiModel;
+    }
+
+    public void setAiModel(AiModel aiModel) {
+        this.aiModel = aiModel;
+        settings.set(CONTROLLER_AI_MODEL, aiModel.name());
+    }
+
+    public String getAiPrompt() {
+        return aiPrompt;
+    }
+
+    public void setAiPrompt(String aiPrompt) {
+        this.aiPrompt = aiPrompt;
+        settings.set(CONTROLLER_AI_PROMPT, aiPrompt);
+    }
+
+    public String getDefaultAiPrompt() {
+        return AiImageRenderer.DEFAULT_PROMPT;
+    }
+
     public void stop() {
         if (photoRenderer != null) {
             photoRenderer.stop();
@@ -451,8 +526,10 @@ public class Controller {
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "Starting render..."));
         cropArea = null;
         stampCoverage = null;
+        aiReferenceImage = null;
         int originalSkyColor = home.getEnvironment().getSkyColor();
         int originalGroundColor = home.getEnvironment().getGroundColor();
+        HomeTexture originalSkyTexture = home.getEnvironment().getSkyTexture();
         BufferedImage stencilMask = null;
 
         try {
@@ -465,8 +542,18 @@ public class Controller {
                 if (useExistingRenders && stampFile.exists()) {
                     stencilMask = ImageIO.read(stampFile);
                 } else {
+                    // Paint the whole background with the green chroma key so the
+                    // stamp can tell floor plan from sky/ground. setGroundColor
+                    // keys the ground, but the photo renderer IGNORES the sky
+                    // COLOR - it draws the sky from the sun-sky model (or a sky
+                    // texture). Without a sky texture the sky renders as a bright,
+                    // near-white sun-sky that the green test never matched, so the
+                    // stamp kept the entire sky as "inside". A solid-green sky
+                    // TEXTURE is honoured verbatim by the aerial (observer) camera,
+                    // forcing a keyable green sky. See createChromaKeySkyTexture.
                     home.getEnvironment().setSkyColor(AutoCrop.CROP_COLOR.getRGB());
                     home.getEnvironment().setGroundColor(AutoCrop.CROP_COLOR.getRGB());
+                    home.getEnvironment().setSkyTexture(createChromaKeySkyTexture());
                     // Render the stamp at the bright daytime moment (renderDateTimes
                     // index 0 is already the brightest time of the configured day) so
                     // the green chroma key stays as bright as possible, regardless of
@@ -477,6 +564,7 @@ public class Controller {
                     stencilMask = createFloorplanStamp(tempBaseImage);
                     home.getEnvironment().setSkyColor(originalSkyColor);
                     home.getEnvironment().setGroundColor(originalGroundColor);
+                    home.getEnvironment().setSkyTexture(originalSkyTexture);
                 }
                 this.cropArea = findCropAreaFromStamp(stencilMask);
                 updateEntityPositionsForCrop();
@@ -544,6 +632,7 @@ public class Controller {
         } finally {
             home.getEnvironment().setSkyColor(originalSkyColor);
             home.getEnvironment().setGroundColor(originalGroundColor);
+            home.getEnvironment().setSkyTexture(originalSkyTexture);
             restoreEntityConfiguration();
         }
     }
@@ -578,6 +667,28 @@ public class Controller {
         ImageIO.write(stamp, "png", stampFile);
 
         return stamp;
+    }
+
+    // Builds a solid green sky texture used only while rendering the stamp. The
+    // photo renderer never paints the sky with the environment's sky COLOR, so a
+    // texture is the only way to give the sky the chroma-key colour and make it
+    // detectable as background. The image is a tiny solid green tile; whatever
+    // way the renderer maps it onto the sky background, every pixel comes out
+    // green, so isStampBackgroundColor keys the whole sky out.
+    private HomeTexture createChromaKeySkyTexture() throws IOException {
+        BufferedImage green = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = green.createGraphics();
+        graphics.setColor(AutoCrop.CROP_COLOR);
+        graphics.fillRect(0, 0, green.getWidth(), green.getHeight());
+        graphics.dispose();
+
+        File textureFile = File.createTempFile("ha-floorplan-stamp-sky", ".png");
+        textureFile.deleteOnExit();
+        ImageIO.write(green, "png", textureFile);
+
+        URL textureUrl = textureFile.toURI().toURL();
+        CatalogTexture catalogTexture = new CatalogTexture("stamp-sky", new URLContent(textureUrl), 100f, 100f);
+        return new HomeTexture(catalogTexture);
     }
 
     // Marks every background pixel connected to the image border via an
@@ -1409,6 +1520,12 @@ public class Controller {
 
         if (useExistingRenders && finalImageFile.exists()) {
             propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Skipping " + imageName + "..."));
+            // When AI rendering is active, downstream processing worked on the
+            // AI-enhanced image, so return that one to keep overlays consistent.
+            File aiRenderFile = aiRenderFile(imageName);
+            if (isAiRenderingActive() && aiRenderFile.exists()) {
+                return ImageIO.read(aiRenderFile);
+            }
             if (rawRenderFile.exists()) {
                 return ImageIO.read(rawRenderFile);
             }
@@ -1466,6 +1583,7 @@ public class Controller {
         }
 
         saveRawRender(rawImage, imageName);
+        rawImage = enhanceWithAi(rawImage, imageName);
 
         BufferedImage processedImage;
         if (baseImage != null) {
@@ -1480,6 +1598,38 @@ public class Controller {
         propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(++numberOfCompletedRenders, "Finished " + imageName + "."));
 
         return rawImage;
+    }
+
+    private boolean isAiRenderingActive() {
+        return aiRendering && aiApiKey != null && !aiApiKey.trim().isEmpty();
+    }
+
+    private File aiRenderFile(String imageName) {
+        return new File(outputRendersDirectoryName + File.separator + imageName + "_ai.png");
+    }
+
+    // Re-renders the raw (uncropped) image photorealistically via the AI model.
+    // Runs before cropping/stamping so the enhanced image goes through the same
+    // post-processing as a regular render. The result is cached next to the raw
+    // render so re-runs with "use existing renders" don't repeat the API call.
+    private BufferedImage enhanceWithAi(BufferedImage image, String imageName) throws IOException, InterruptedException {
+        if (!isAiRenderingActive())
+            return image;
+
+        File aiRenderFile = aiRenderFile(imageName);
+        if (useExistingRenders && aiRenderFile.exists()) {
+            BufferedImage cached = ImageIO.read(aiRenderFile);
+            if (aiReferenceImage == null)
+                aiReferenceImage = cached;
+            return cached;
+        }
+
+        propertyChangeSupport.firePropertyChange(Property.PROGRESS_UPDATE.name(), null, new ProgressUpdate(numberOfCompletedRenders, "AI re-rendering " + imageName + "..."));
+        BufferedImage enhanced = new AiImageRenderer(aiApiKey.trim(), aiModel.getModelId(), aiPrompt).enhance(image, aiReferenceImage);
+        ImageIO.write(enhanced, "png", aiRenderFile);
+        if (aiReferenceImage == null)
+            aiReferenceImage = enhanced;
+        return enhanced;
     }
 
     private BufferedImage generateNightBaseImage() throws IOException, InterruptedException {
